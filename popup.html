@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>ACG Website Filter</title>
+    <style>
+        body { font-family: Arial, sans-serif; min-width: 300px; padding: 10px; }
+        h2 { font-size: 1.2em; margin-top: 0; }
+        h3 { font-size: 1em; margin-top: 15px; }
+        label, input, button { display: block; margin: 8px 0; }
+        ul { padding-left: 20px; max-height: 200px; overflow-y: auto; }
+        .keyword-item { display: flex; align-items: center; margin-bottom: 5px; }
+        .keyword-item span { flex: 1; }
+        .remove-btn { margin-left: 8px; color: red; cursor: pointer; }
+        .info { font-size: 0.85em; color: #666; margin-top: 5px; }
+        .unblock-section { border: 1px solid #ddd; padding: 10px; margin-bottom: 15px; border-radius: 5px; }
+        .hint { font-size: 0.8em; color: #888; font-style: italic; margin-bottom: 8px; }
+        .hint-text { font-size: 1.1em; color: #000; font-weight: bold; margin-bottom: 8px; }
+        .confirmation-dialog { 
+            position: fixed; 
+            top: 0; 
+            left: 0; 
+            width: 100%; 
+            height: 100%; 
+            background: rgba(0,0,0,0.5); 
+            display: none; 
+            justify-content: center; 
+            align-items: center; 
+            z-index: 1000;
+        }
+        .dialog-content { 
+            background: white; 
+            padding: 20px; 
+            border-radius: 10px; 
+            text-align: center; 
+            min-width: 250px;
+        }
+        .dialog-buttons { 
+            margin-top: 15px; 
+            display: flex; 
+            gap: 10px; 
+            justify-content: center;
+        }
+        .dialog-buttons button { 
+            padding: 8px 16px; 
+            border: none; 
+            border-radius: 5px; 
+            cursor: pointer;
+        }
+        .confirm-btn { 
+            background: #007cba; 
+            color: white; 
+        }
+        .meditate-btn { 
+            background: #28a745; 
+            color: white; 
+        }
+        .noselect {
+        user-select: none;
+        -webkit-user-select: none;
+        -ms-user-select: none;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="unblock-section">
+        <label style="display: flex; align-items: center; justify-content: space-between; cursor: pointer; font-weight: bold; padding: 5px 0;">
+            <span>Blocking Enabled</span>
+            <input type="checkbox" id="extension-master-switch" checked style="width: 20px; height: 20px; margin: 0;">
+        </label>
+    </div>
+
+    <h2>ACG Website Filter</h2>
+    
+    <div class="unblock-section">
+        <h3>Temporary Unblock</h3>
+        <div class="hint">Type the exact text below to unblock for 5 minutes:</div>
+        <div class="hint-text noselect">"我是一个很自律很少刷网页的人"</div>
+        <input type="text" id="unblock-input" placeholder="Enter the required text...">
+    </div>
+    
+    <div id="confirmation-dialog" class="confirmation-dialog">
+        <div class="dialog-content">
+            <p>你确定吗?</p>
+            <div class="dialog-buttons">
+                <button id="confirm-btn" class="confirm-btn">确定</button>
+                <button id="meditate-btn" class="meditate-btn">还是去冥想吧</button>
+            </div>
+        </div>
+    </div>
+    
+    <hr>
+    <h3>Blocked Keywords</h3>
+    <p class="info">Links containing these keywords will be hidden on supported sites.</p>
+    <input type="text" id="keyword-input" placeholder="Add keyword...">
+    <button id="add-keyword">Add Keyword</button>
+    <ul id="keyword-list"></ul>
+    <script src="popup.js"></script>
+</body>
+</html> 
