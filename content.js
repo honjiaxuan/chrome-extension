@@ -4,37 +4,7 @@ console.log(window.location.pathname);
 
 // Create block overlay function
 function createBlockOverlay() {
-    // Check if overlay already exists
-    if (document.getElementById('acg-block-overlay')) {
-        return;
-    }
-    
-    const overlay = document.createElement('div');
-    overlay.id = 'acg-block-overlay';
-    overlay.style.position = 'fixed';
-    overlay.style.top = '0';
-    overlay.style.left = '0';
-    overlay.style.width = '100%';
-    overlay.style.height = '100%';
-    overlay.style.backgroundColor = '#f0f0f0';
-    overlay.style.zIndex = '9999999';
-    overlay.style.display = 'flex';
-    overlay.style.flexDirection = 'column';
-    overlay.style.alignItems = 'center';
-    overlay.style.justifyContent = 'center';
-    overlay.style.fontFamily = 'Arial, sans-serif';
-    
-    const heading = document.createElement('h1');
-    heading.textContent = 'Access Blocked';
-    
-    const message = document.createElement('p');
-    message.textContent = 'Access to this website has been blocked by the extension.';
-    
-    overlay.appendChild(heading);
-    overlay.appendChild(message);
-    
-    document.body.appendChild(overlay);
-    console.log("Added block overlay to page");
+    window.location.href = chrome.runtime.getURL('onetab.html');
 }
 
 // Remove block overlay function
@@ -64,74 +34,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
 });
 
-// Hide links containing blocked keywords on aaccnn.com
-function hideBlockedLinks() {
-    if (window.location.hostname === "www.aaccnn.com" || window.location.hostname.includes("aaccnn.com")) {
-        // Check if temporarily unblocked first
-        checkIfTemporarilyUnblocked().then(isUnblocked => {
-            if (isUnblocked) {
-                console.log("aaccnn filtering temporarily disabled");
-                return;
-            }
-            
-            chrome.storage.local.get(["blockedKeywords"], function(data) {
-                let blockedKeywords = data.blockedKeywords || [];
-                if (blockedKeywords.length === 0) return;
-                
-                // Target links in book-rand divs and other common containers
-                const linkElements = document.querySelectorAll('.book-rand a, .book-item a, .book-list a, .book-title a, a[href^="/book/"]');
-                
-                linkElements.forEach(link => {
-                    // Check the entire link text
-                    const linkText = link.textContent.trim();
-                    
-                    // Also specifically check h4 elements within the link
-                    const h4Element = link.querySelector('h4');
-                    const h4Text = h4Element ? h4Element.textContent.trim() : '';
-                    
-                    // Check link alt text in images
-                    const imgElement = link.querySelector('img');
-                    const altText = imgElement && imgElement.alt ? imgElement.alt.trim() : '';
-                    
-                    // Combined text to check
-                    const textToCheck = linkText + ' ' + h4Text + ' ' + altText;
-                    
-                    if (blockedKeywords.some(keyword => textToCheck.includes(keyword))) {
-                        link.style.display = 'none';
-                        console.log("Hidden link:", textToCheck);
-                    }
-                });
-            });
-        });
-    }
-}
 
-// Hide links containing blocked keywords on 8xbook.cc
-function hideBlockedLinks8xbook() {
-    if (window.location.hostname === "8xbook.cc" || window.location.hostname.endsWith(".8xbook.cc")) {
-        // Check if temporarily unblocked first
-        checkIfTemporarilyUnblocked().then(isUnblocked => {
-            if (isUnblocked) {
-                console.log("8xbook filtering temporarily disabled");
-                return;
-            }
-            
-            chrome.storage.local.get(["blockedKeywords"], function(data) {
-                let blockedKeywords = data.blockedKeywords || [];
-                if (blockedKeywords.length === 0) return;
-                
-                const linkElements = document.querySelectorAll('a.db.nw');
-                linkElements.forEach(link => {
-                    const linkText = link.textContent.trim();
-                    if (blockedKeywords.some(keyword => linkText.includes(keyword))) {
-                        link.style.display = 'none';
-                        console.log("Hidden 8xbook link:", linkText);
-                    }
-                });
-            });
-        });
-    }
-}
+
+
 
 // --- Independent Redirect Logic (Always Active) ---
 
@@ -168,10 +73,28 @@ function checkIfTemporarilyUnblocked() {
     });
 }
 
+function safeStorageGet(keys) {
+    return new Promise((resolve) => {
+        try {
+            chrome.storage.local.get(keys, (data) => {
+                if (chrome.runtime.lastError) {
+                    console.warn("Storage access failed (extension context likely invalidated)");
+                    resolve({});
+                } else {
+                    resolve(data);
+                }
+            });
+        } catch (e) {
+            console.warn("Extension context invalidated, stopping storage access");
+            resolve({});
+        }
+    });
+}
+
 // Function to apply all blocking logic
 function applyBlocking() {
     // 1. Check for Access Blocking Overlays (Affected by Switch)
-    chrome.storage.local.get(["extensionEnabled"], function(data) {
+    safeStorageGet(["extensionEnabled"]).then(data => {
         if (data.extensionEnabled === false) {
             console.log("Access blocking disabled by master switch");
             removeBlockOverlay();
@@ -205,7 +128,7 @@ function applyBlocking() {
         if (isUnblocked) {
             console.log("Filters temporarily disabled via meditation/unblock text");
             // Show all hidden elements if they were hidden by this script
-            document.querySelectorAll(".li.gallary_item, .book-rand a, .book-item a, .book-list a, .book-title a, a.db.nw").forEach(item => {
+            document.querySelectorAll(".li.gallary_item").forEach(item => {
                 if (item.style.display === "none") {
                     item.style.display = "";
                 }
@@ -226,71 +149,63 @@ function applyBlocking() {
 
             if (isListPage) {
                 function hideItems() {
-                    chrome.storage.local.get(["blockedKeywords"], function (data) {
-                        let blockedKeywords = data.blockedKeywords || [];
+                    document.querySelectorAll(".li.gallary_item").forEach(item => {
+                        // 1. Category Filtering via ::before content or class
+                        let picBox = item.querySelector(".pic_box[class*='cate-']");
+                        if (picBox) {
+                            const rawContent = window.getComputedStyle(picBox, '::before').getPropertyValue('content');
+                            // Normalize content: remove quotes and handle both full-width and half-width slashes/ampersands
+                            const normalizedContent = rawContent.replace(/['"]/g, "")
+                                .replace(/／/g, "/")
+                                .replace(/＆/g, "&");
 
-                        document.querySelectorAll(".li.gallary_item").forEach(item => {
-                            // 1. Category Filtering via ::before content or class
-                            let picBox = item.querySelector(".pic_box[class*='cate-']");
-                            if (picBox) {
-                                const rawContent = window.getComputedStyle(picBox, '::before').getPropertyValue('content');
-                                // Normalize content: remove quotes and handle both full-width and half-width slashes/ampersands
-                                const normalizedContent = rawContent.replace(/['"]/g, "")
-                                    .replace(/／/g, "/")
-                                    .replace(/＆/g, "&");
+                            const isBlockedCategory = 
+                                normalizedContent.includes("/日語") || 
+                                normalizedContent.includes("同人誌/English") ||
+                                picBox.classList.contains("cate-14") || // Direct class check for Magazine/Short Stories
+                                picBox.classList.contains("cate-12") || // Doujinshi
+                                picBox.classList.contains("cate-13");   // Single Volumes
 
-                                const isBlockedCategory = 
-                                    normalizedContent.includes("/日語") || 
-                                    normalizedContent.includes("同人誌/English") ||
-                                    picBox.classList.contains("cate-14") || // Direct class check for Magazine/Short Stories
-                                    picBox.classList.contains("cate-12") || // Doujinshi
-                                    picBox.classList.contains("cate-13");   // Single Volumes
-
-                                if (isBlockedCategory) {
-                                    item.style.display = "none";
-                                    return;
-                                }
+                            if (isBlockedCategory) {
+                                item.style.display = "none";
+                                return;
                             }
+                        }
 
-                            // 2. Keyword Filtering
-                            let titleElement = item.querySelector(".title a");
-                            if (titleElement) {
-                                let rawHTML = titleElement.innerHTML;
-                                let plainText = rawHTML.replace(/<\/?em>/g, "");
+                        // 2. Keyword Filtering
+                        let titleElement = item.querySelector(".title a");
+                        if (titleElement) {
+                            let rawHTML = titleElement.innerHTML;
+                            let plainText = rawHTML.replace(/<\/?em>/g, "");
 
-                                if (blockedKeywords.some(keyword => plainText.includes(keyword))) {
-                                    item.style.display = "none";
-                                } else {
-                                    // Title cleaning logic (remains active)
-                                    let cleanedTitle = plainText.replace(/\[[^\]]*?汉化[^\]]*?\]/g, "").replace(/\s+/g, " ").trim();
-                                    cleanedTitle = cleanedTitle.replace(/\[[^\]]*?个人[^\]]*?\]/g, "").replace(/\s+/g, " ").trim();
-                                    cleanedTitle = cleanedTitle.replace(/\[[^\]]*?AI翻譯[^\]]*?\]/g, "").replace(/\s+/g, " ").trim();
-                                    cleanedTitle = cleanedTitle.replace(/\[[^\]]*?個人[^\]]*?\]/g, "").replace(/\s+/g, " ").trim();
-                                    cleanedTitle = cleanedTitle.replace(/\[[^\]]*?中国翻訳[^\]]*?\]/g, "").replace(/\s+/g, " ").trim();
-                                    cleanedTitle = cleanedTitle.replace(/\[[^\]]*?漢化[^\]]*?\]/g, "").replace(/\s+/g, " ").trim();
-                                    cleanedTitle = cleanedTitle.replace(/\[[^\]]*?DL版[^\]]*?\]/g, "").replace(/\s+/g, " ").trim();
-                                    cleanedTitle = cleanedTitle.replace(/\[[^\]]*?無修正[^\]]*?\]/g, "").replace(/\s+/g, " ").trim();
+                            // Title cleaning logic (remains active)
+                            let cleanedTitle = plainText.replace(/\[[^\]]*?汉化[^\]]*?\]/g, "").replace(/\s+/g, " ").trim();
+                            cleanedTitle = cleanedTitle.replace(/\[[^\]]*?个人[^\]]*?\]/g, "").replace(/\s+/g, " ").trim();
+                            cleanedTitle = cleanedTitle.replace(/\[[^\]]*?AI翻譯[^\]]*?\]/g, "").replace(/\s+/g, " ").trim();
+                            cleanedTitle = cleanedTitle.replace(/\[[^\]]*?個人[^\]]*?\]/g, "").replace(/\s+/g, " ").trim();
+                            cleanedTitle = cleanedTitle.replace(/\[[^\]]*?中国翻訳[^\]]*?\]/g, "").replace(/\s+/g, " ").trim();
+                            cleanedTitle = cleanedTitle.replace(/\[[^\]]*?漢化[^\]]*?\]/g, "").replace(/\s+/g, " ").trim();
+                            cleanedTitle = cleanedTitle.replace(/\[[^\]]*?DL版[^\]]*?\]/g, "").replace(/\s+/g, " ").trim();
+                            cleanedTitle = cleanedTitle.replace(/\[[^\]]*?無修正[^\]]*?\]/g, "").replace(/\s+/g, " ").trim();
 
-                                    cleanedTitle = cleanedTitle.replace(/\([^\)]*?COMIC BAVEL[^\)]*?\)/g, "").replace(/\s+/g, " ").trim();
-                                    cleanedTitle = cleanedTitle.replace(/\([^\)]*?COMIC アンスリウム[^\)]*?\)/g, "").replace(/\s+/g, " ").trim();
-                                    cleanedTitle = cleanedTitle.replace(/\([^\)]*?コミックリブート[^\)]*?\)/g, "").replace(/\s+/g, " ").trim();
-                                    cleanedTitle = cleanedTitle.replace(/\([^\)]*?アクションピザッツ[^\)]*?\)/g, "").replace(/\s+/g, " ").trim();
-                                    cleanedTitle = cleanedTitle.replace(/\([^\)]*?快楽天[^\)]*?\)/g, "").replace(/\s+/g, " ").trim();
-                                    cleanedTitle = cleanedTitle.replace(/\([^\)]*?COMIC 外楽[^\)]*?\)/g, "").replace(/\s+/g, " ").trim();
-                                    cleanedTitle = cleanedTitle.replace(/\([^\)]*?コミックゼロス[^\)]*?\)/g, "").replace(/\s+/g, " ").trim();
-                                    cleanedTitle = cleanedTitle.replace(/\([^\)]*?COMIC GEE[^\)]*?\)/g, "").replace(/\s+/g, " ").trim();
-                                    cleanedTitle = cleanedTitle.replace(/\([^\)]*?COMIC LO[^\)]*?\)/g, "").replace(/\s+/g, " ").trim();
-                                    cleanedTitle = cleanedTitle.replace(/\([^\)]*?COMIC 失楽天[^\)]*?\)/g, "").replace(/\s+/g, " ").trim();
-                                    cleanedTitle = cleanedTitle.replace(/\([^\)]*?G-エッヂ[^\)]*?\)/g, "").replace(/\s+/g, " ").trim();
-                                    cleanedTitle = cleanedTitle.replace(/\([^\)]*?コミックアンリアル[^\)]*?\)/g, "").replace(/\s+/g, " ").trim();
-                                    
-                                    if (titleElement.innerText !== cleanedTitle) {
-                                        titleElement.innerText = cleanedTitle;
-                                        titleElement.title = cleanedTitle;
-                                    }
-                                }
+                            cleanedTitle = cleanedTitle.replace(/\([^\)]*?COMIC BAVEL[^\)]*?\)/g, "").replace(/\s+/g, " ").trim();
+                            cleanedTitle = cleanedTitle.replace(/\([^\)]*?COMIC アンスリウム[^\)]*?\)/g, "").replace(/\s+/g, " ").trim();
+                            cleanedTitle = cleanedTitle.replace(/\([^\)]*?コミックリブート[^\)]*?\)/g, "").replace(/\s+/g, " ").trim();
+                            cleanedTitle = cleanedTitle.replace(/\([^\)]*?アクションピザッツ[^\)]*?\)/g, "").replace(/\s+/g, " ").trim();
+                            cleanedTitle = cleanedTitle.replace(/\([^\)]*?快楽天[^\)]*?\)/g, "").replace(/\s+/g, " ").trim();
+                            cleanedTitle = cleanedTitle.replace(/\([^\)]*?COMIC 外楽[^\)]*?\)/g, "").replace(/\s+/g, " ").trim();
+                            cleanedTitle = cleanedTitle.replace(/\([^\)]*?コミックゼロス[^\)]*?\)/g, "").replace(/\s+/g, " ").trim();
+                            cleanedTitle = cleanedTitle.replace(/\([^\)]*?COMIC GEE[^\)]*?\)/g, "").replace(/\s+/g, " ").trim();
+                            cleanedTitle = cleanedTitle.replace(/\([^\)]*?COMIC LO[^\)]*?\)/g, "").replace(/\s+/g, " ").trim();
+                            cleanedTitle = cleanedTitle.replace(/\([^\)]*?COMIC 失楽天[^\)]*?\)/g, "").replace(/\s+/g, " ").trim();
+                            cleanedTitle = cleanedTitle.replace(/\([^\)]*?G-エッヂ[^\)]*?\)/g, "").replace(/\s+/g, " ").trim();
+                            cleanedTitle = cleanedTitle.replace(/\([^\)]*?コミックアンリアル[^\)]*?\)/g, "").replace(/\s+/g, " ").trim();
+                            
+                            if (titleElement.innerText !== cleanedTitle) {
+                                titleElement.innerText = cleanedTitle;
+                                titleElement.title = cleanedTitle;
                             }
-                        });
+                        }
                     });
                 }
                 
@@ -304,25 +219,9 @@ function applyBlocking() {
             }
         }
 
-        // Apply filters for aaccnn.com
-        if (window.location.hostname === "www.aaccnn.com" || window.location.hostname.includes("aaccnn.com")) {
-            hideBlockedLinks();
-            if (!window.acgObserverSet) {
-                const observer = new MutationObserver(() => hideBlockedLinks());
-                observer.observe(document.body, { childList: true, subtree: true });
-                window.acgObserverSet = true;
-            }
-        }
 
-        // Apply filters for 8xbook.cc
-        if (window.location.hostname === "8xbook.cc" || window.location.hostname.endsWith(".8xbook.cc")) {
-            hideBlockedLinks8xbook();
-            if (!window.acg8xObserverSet) {
-                const observer8x = new MutationObserver(() => hideBlockedLinks8xbook());
-                observer8x.observe(document.body, { childList: true, subtree: true });
-                window.acg8xObserverSet = true;
-            }
-        }
+
+
     });
 }
 

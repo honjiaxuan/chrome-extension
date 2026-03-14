@@ -1,6 +1,6 @@
 {
   "manifest_version": 3,
-  "name": "ACG Website Filter",
+  "name": "HJX Extension",
   "version": "2.10",
   "description": "Block or filter specific content on ACG-related websites.",
   "permissions": [
