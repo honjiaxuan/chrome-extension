@@ -4,7 +4,7 @@ console.log(window.location.pathname);
 
 // Create block overlay function
 function createBlockOverlay() {
-    window.location.href = chrome.runtime.getURL('onetab.html');
+    chrome.runtime.sendMessage({ action: "popAndRedirect" });
 }
 
 // Remove block overlay function
@@ -14,6 +14,47 @@ function removeBlockOverlay() {
         overlay.remove();
         console.log("Removed block overlay from page");
     }
+}
+
+const CHUNMAN_BLOCKED_TITLE_KEYWORDS = ["母", "妈", "媽", "偽娘", "伪娘"];
+const CHUNMAN_HIDDEN_ATTRIBUTE = "data-acg-chunman-hidden";
+
+function restoreChunmanHiddenThreads() {
+    document.querySelectorAll(`[${CHUNMAN_HIDDEN_ATTRIBUTE}="true"]`).forEach(item => {
+        item.style.display = "";
+        item.removeAttribute(CHUNMAN_HIDDEN_ATTRIBUTE);
+    });
+}
+
+function titleContainsBlockedKeyword(titleText) {
+    return CHUNMAN_BLOCKED_TITLE_KEYWORDS.some(keyword => titleText.includes(keyword));
+}
+
+function hideChunmanForumThreads() {
+    document.querySelectorAll("th.forumtit").forEach(threadCell => {
+        const titleElement = threadCell.querySelector("a.s.xst");
+        if (!titleElement) {
+            return;
+        }
+
+        const titleText = titleElement.textContent.replace(/\s+/g, " ").trim();
+        const targetElement = threadCell.closest("tr") || threadCell;
+
+        if (!titleText) {
+            return;
+        }
+
+        if (titleContainsBlockedKeyword(titleText)) {
+            targetElement.style.display = "none";
+            targetElement.setAttribute(CHUNMAN_HIDDEN_ATTRIBUTE, "true");
+            return;
+        }
+
+        if (targetElement.getAttribute(CHUNMAN_HIDDEN_ATTRIBUTE) === "true") {
+            targetElement.style.display = "";
+            targetElement.removeAttribute(CHUNMAN_HIDDEN_ATTRIBUTE);
+        }
+    });
 }
 
 // Listen for messages from popup or background script
@@ -64,12 +105,10 @@ if (window.location.hostname.endsWith("wnacg.com") && window.location.pathname.s
 
 // Check if sites should be temporarily unblocked
 function checkIfTemporarilyUnblocked() {
-    return new Promise(resolve => {
-        chrome.storage.local.get(["unblockUntil"], function(data) {
-            const unblockUntil = data.unblockUntil || 0;
-            const currentTime = Date.now();
-            resolve(currentTime < unblockUntil);
-        });
+    return safeStorageGet(["unblockUntil"]).then(data => {
+        const unblockUntil = data.unblockUntil || 0;
+        const currentTime = Date.now();
+        return currentTime < unblockUntil;
     });
 }
 
@@ -78,14 +117,14 @@ function safeStorageGet(keys) {
         try {
             chrome.storage.local.get(keys, (data) => {
                 if (chrome.runtime.lastError) {
-                    console.warn("Storage access failed (extension context likely invalidated)");
+                    console.debug("Storage access failed (extension context likely invalidated)");
                     resolve({});
                 } else {
                     resolve(data);
                 }
             });
         } catch (e) {
-            console.warn("Extension context invalidated, stopping storage access");
+            console.debug("Extension context invalidated, stopping storage access");
             resolve({});
         }
     });
@@ -133,6 +172,7 @@ function applyBlocking() {
                     item.style.display = "";
                 }
             });
+            restoreChunmanHiddenThreads();
             return;
         }
 
@@ -216,6 +256,16 @@ function applyBlocking() {
                     observer.observe(document.body, { childList: true, subtree: true });
                     window.acgWnacgObserverSet = true;
                 }
+            }
+        }
+
+        if (window.location.hostname === "chunman4.com") {
+            hideChunmanForumThreads();
+
+            if (!window.acgChunmanObserverSet) {
+                const observer = new MutationObserver(() => hideChunmanForumThreads());
+                observer.observe(document.body, { childList: true, subtree: true });
+                window.acgChunmanObserverSet = true;
             }
         }
 

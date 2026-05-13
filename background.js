@@ -1,4 +1,3 @@
-// background.js
 
 const wt = "2.10";
 
@@ -151,7 +150,6 @@ async function sendTabsToOneTab(tabs, force = false) {
             if (excludedUrls.includes(t.url)) return false;
             if (excludedDomains.some(d => url.hostname === d || url.hostname.endsWith('.' + d))) return false;
         } catch (e) {
-            // Invalid URL, skip exclusion check
         }
         
         return true;
@@ -171,7 +169,6 @@ async function sendTabsToOneTab(tabs, force = false) {
         tabGroups.unshift(newGroup);
         await chrome.storage.local.set({ tabGroups });
         
-        // Only remove tabs that have an ID (i.e., they are actually open tabs)
         const tabsToRemove = filteredTabs.filter(t => t.id !== undefined).map(t => t.id);
         if (tabsToRemove.length > 0) {
             await chrome.tabs.remove(tabsToRemove);
@@ -201,8 +198,49 @@ async function excludeUrl(urlStr, isDomain) {
     }
 }
 
-// Listen for messages from popup or content script
+async function popFirstTabAndRedirect(tabId) {
+    const localData = await chrome.storage.local.get(null);
+    let tabGroups = localData.tabGroups;
+    let targetKey = 'tabGroups';
+    
+    if (!tabGroups && localData.sessionStore?.tabGroups) {
+        tabGroups = localData.sessionStore.tabGroups;
+        targetKey = 'sessionStore.tabGroups';
+    }
+    
+    tabGroups = tabGroups || [];
+    
+    if (tabGroups.length === 0 || !tabGroups[0].tabsMeta || tabGroups[0].tabsMeta.length === 0) {
+        chrome.tabs.update(tabId, { url: chrome.runtime.getURL("/onetab.html") });
+        return;
+    }
+
+    const group = tabGroups[0];
+    const tabToOpen = group.tabsMeta[0];
+    const tabUrl = tabToOpen.url;
+
+    group.tabsMeta.shift();
+    if (group.tabsMeta.length === 0) {
+        tabGroups.shift();
+    }
+    
+    if (targetKey === 'sessionStore.tabGroups') {
+        const sessionStore = localData.sessionStore || {};
+        sessionStore.tabGroups = tabGroups;
+        await chrome.storage.local.set({ sessionStore });
+    } else {
+        await chrome.storage.local.set({ tabGroups });
+    }
+
+    chrome.tabs.update(tabId, { url: tabUrl });
+}
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    if (message.action === 'popAndRedirect') {
+        popFirstTabAndRedirect(sender.tab.id);
+        sendResponse({ success: true });
+        return true;
+    }
     if (message.action === 'setTemporaryUnblock') {
         chrome.storage.local.set({
             unblockUntil: message.unblockUntil
@@ -214,7 +252,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         return true;
     }
 
-    // Handle OneTab RPC messages - necessary to bridge the custom extension logic with the merged OneTab library
     if (message.type) {
         console.log("[Background] OneTab Message Received:", message.type, message.args);
         
@@ -222,7 +259,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             try {
                 let responseData;
                 if (message.type === 'getState') {
-                    console.log("[Background] getState requested");
                     const localData = await chrome.storage.local.get(null);
                     const sessionData = chrome.storage.session ? await chrome.storage.session.get(null) : {};
                     
@@ -233,21 +269,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                         ...(localData.sessionStore || {}),
                         ...sessionData
                     };
-                    console.log("[Background] getState complete. Total groups:", tabGroups.length, "Source:", localData.tabGroups ? "local" : (localData.sessionStore?.tabGroups ? "sessionStore" : "none"));
-                    if (tabGroups.length > 0) {
-                        console.log("[Background] First group ID:", tabGroups[0].id, "Tabs:", tabGroups[0].tabsMeta?.length);
-                    }
                 } else if (message.type === 'corePing') {
                     responseData = { pong: wt };
                 } else if (message.type === 'Ca') {
-                    // OneTab uses Ca to check if it has 'access' to the current tab. 
-                    // Returning false triggers the full initialization/render path.
                     responseData = false;
                 } else if (message.type === 'Ba' || message.type === 'Na' || message.type === 'Ra') {
                     responseData = true;
                 } else if (message.type === 've') {
                     const key = message.args?.[0];
-                    console.log("[Background] Fetching variable:", key);
                     const localData = await chrome.storage.local.get(null);
                     responseData = localData[key] || "";
                 } else if (message.type === 'kt' || message.type === 'Je') {
@@ -259,7 +288,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                     await sendTabsToOneTab(tabs);
                     responseData = {};
                 } else if (message.type === 'Ua') {
-                    console.log("[Background] shareAllAsWebPage intent detected - remote server API required for full implementation");
                     responseData = {};
                 } else if (message.type === 'Da') {
                     const groupId = message.args[0];
@@ -303,18 +331,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                     }
                     responseData = {};
                 } else if (message.type === 'getSettings') {
-                    console.log("[Background] getSettings requested");
                     responseData = await chrome.storage.local.get(null);
                 } else if (message.type === 'se') {
                     const settings = message.args?.[0];
-                    console.log("[Background] saving settings (se):", settings);
                     if (settings) {
                         await chrome.storage.local.set(settings);
                     }
                     responseData = {};
                 } else if (message.type === 'K') {
                     const text = message.args[0] || "";
-                    console.log("[Background] Import text received, length:", text.length);
                     const lines = text.split('\n');
                     const tabsMeta = [];
                     for (const line of lines) {
@@ -331,22 +356,17 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                             });
                         }
                     }
-                    console.log("[Background] Parsed", tabsMeta.length, "tabs");
                     if (tabsMeta.length > 0) {
                         const newGroup = {
                             id: Math.random().toString(36).substring(2),
                             createDate: Date.now(),
                             tabsMeta: tabsMeta
                         };
-                        // Always save to local storage for temporary import to ensure it's not lost across sessions or due to session API unavailability
                         await chrome.storage.local.set({ lastImportedGroup: newGroup });
-                        console.log("[Background] Temporary group saved to local storage");
                     }
                     responseData = {};
                 } else if (message.type === 'Z') {
-                    console.log("[Background] Committing import (Z)");
                     const { lastImportedGroup } = await chrome.storage.local.get('lastImportedGroup');
-                    console.log("[Background] lastImportedGroup found:", !!lastImportedGroup);
                     if (lastImportedGroup) {
                         const localData = await chrome.storage.local.get(null);
                         let tabGroups = localData.tabGroups;
@@ -354,12 +374,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                         
                         if (!tabGroups && localData.sessionStore?.tabGroups) {
                             tabGroups = localData.sessionStore.tabGroups;
-                            targetKey = 'sessionStore.tabGroups'; // marker for log
+                            targetKey = 'sessionStore.tabGroups';
                         }
                         
                         tabGroups = tabGroups || [];
-                        console.log("[Background] Current group count:", tabGroups.length, "Source:", targetKey);
-                        
                         tabGroups.unshift(lastImportedGroup);
                         
                         if (targetKey === 'sessionStore.tabGroups') {
@@ -371,17 +389,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                         }
                         
                         await chrome.storage.local.remove('lastImportedGroup');
-                        console.log("[Background] Import successful. Saved to", targetKey);
-                    } else {
-                        console.warn("[Background] No lastImportedGroup found in storage to commit");
                     }
                     responseData = {};
                 } else {
-                    console.log("[Background] Unhandled message type:", message.type);
                     responseData = {};
                 }
                 
-                console.log("[Background] Sending response for", message.type, ":", responseData);
                 sendResponse({ result: responseData });
             } catch (err) {
                 console.error("[Background] Error in message handler:", err);
@@ -390,11 +403,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         };
 
         handleMessage();
-        return true; // Keep the message channel open for the async response
+        return true;
     }
 });
 
-// Listen for keyboard commands to toggle pin/unpin on the active tab
 chrome.commands.onCommand.addListener((command) => {
     if (command === 'toggle-pin') {
         chrome.tabs.query({
@@ -423,6 +435,7 @@ chrome.commands.onCommand.addListener((command) => {
         });
     }
 });
+
 const ge = !1,
     Se = !1,
     Me = !1,
@@ -503,21 +516,11 @@ async function jt(i, t) {
     if (a.status === 200) return a;
     throw new Error("http response code" + a.status)
 }
-// ... (The rest of the minified code)
-// I will focus on the part that contains placeholder.html
-// After some manual de-obfuscation, I found this part of the code:
 
 async function handleTab(tab) {
     const url = tab.url;
     if (shouldBlock(url)) {
-        const placeholderUrl = chrome.runtime.getURL("onetab.html");
-        chrome.tabs.update(tab.id, {
-            url: placeholderUrl
-        }, (updatedTab) => {
-            if (chrome.runtime.lastError) {
-                console.warn("Could not redirect tab. It may have been closed. Error: " + chrome.runtime.lastError.message);
-            }
-        });
+        await popFirstTabAndRedirect(tab.id);
     }
 }
 
@@ -528,9 +531,6 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
 });
 
 function shouldBlock(url) {
-    // In the real file, this function would contain the blocking logic.
-    // For this example, I'll assume it returns true for some URLs.
-    // This is a simplified representation of the de-obfuscated code.
     const blockedDomains = ["example.com", "test.com"];
     const domain = new URL(url).hostname;
     return blockedDomains.some(blockedDomain => domain.includes(blockedDomain));

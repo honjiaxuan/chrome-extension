@@ -30,7 +30,9 @@ document.addEventListener('DOMContentLoaded', function () {
         // Send message to current tab to refresh blocking state
         chrome.tabs.query({ active: true, currentWindow: true }, function (tabs) {
             if (tabs[0] && tabs[0].id) {
-                chrome.tabs.sendMessage(tabs[0].id, { action: 'refreshBlocking' });
+                chrome.tabs.sendMessage(tabs[0].id, { action: 'refreshBlocking' }).catch(err => {
+                    console.debug("Could not send message, content script might not be loaded yet or tab is closed:", err.message);
+                });
             }
         });
     });

@@ -24,10 +24,17 @@
                 console.error('Gemini Shortcut Switcher: Could not find the send button.');
             }
         }
+        else if (event.key === 'Enter' && event.shiftKey) {
+            return;
+        }
         else if (event.key === 'Enter' && event.ctrlKey) {
             event.preventDefault();
             event.stopPropagation();
-            document.execCommand('insertLineBreak');
+            chatInput.dispatchEvent(new KeyboardEvent('keydown', {
+                key: 'Enter', code: 'Enter', keyCode: 13,
+                shiftKey: true, ctrlKey: false,
+                bubbles: true, cancelable: true,
+            }));
         }
     };
 
