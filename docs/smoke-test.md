@@ -7,10 +7,10 @@
 
 ```bash
 node scripts/verify.mjs          # 静态：manifest 引用 / 死文件 / 版本号 / 域名一致
-NODE_PATH=/home/hjx/node_modules node scripts/e2e-smoke.mjs   # 真浏览器 28 项
+NODE_PATH=/home/hjx/node_modules node scripts/e2e-smoke.mjs   # 真浏览器 29 项
 ```
 
-`e2e-smoke.mjs` 覆盖（28 项）：
+`e2e-smoke.mjs` 覆盖（29 项）：
 
 - 扩展能以未打包形式加载，service worker 起来（manifest 合法）
 - `corePing` 与 manifest 版本一致（OneTab bundle 版本补丁没打歪）
@@ -18,7 +18,7 @@ NODE_PATH=/home/hjx/node_modules node scripts/e2e-smoke.mjs   # 真浏览器 28 
 - popup：版本渲染、关键词增删、内容过滤开关写 storage
 - 后台：`Na` 恢复整组真的开标签（旧版死分支）、`Ba` 跨组移动并清理空组、`Da` 删除分组
 - 内容脚本：wnacg 分类/关键词隐藏、标题清洗、临时解锁后还原、关掉过滤后不动页面
-- 内容脚本：知乎首页带查询参数仍被拦截、问答页不拦截
+- 内容脚本：知乎首页带查询参数仍被拦截、问答页不拦截、SPA pushState 到首页 1 秒内被拦截
 - AI 快捷键：Enter 发送、Shift/Ctrl+Enter 不发送、总开关和单站开关生效
 
 ## 手动清单（真机 Edge，10 分钟）

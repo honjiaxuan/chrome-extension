@@ -332,6 +332,15 @@ const zhihuHtml = '<!doctype html><html><body><h1>zhihu</h1></body></html>';
   await inject(zhihuQuestion, 'config.js', 'content.js');
   await sleep(400);
   check('问答页不拦截', (await zhihuQuestion.evaluate(() => window.__hjx.messages)).length === 0);
+
+  await zhihuQuestion.evaluate(() => history.pushState({}, '', '/'));
+  check(
+    'SPA 跳转到首页后 1 秒内被拦截',
+    await waitFor(
+      async () => (await zhihuQuestion.evaluate(() => window.__hjx.messages)).some((m) => m.action === 'popAndRedirect'),
+      3000
+    )
+  );
   await zhihuQuestion.close();
 
   // ---------- 6. AI 快捷键 ----------
