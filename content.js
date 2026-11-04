@@ -181,6 +181,7 @@ function applyBlocking() {
             const isListPage = (
                 window.location.pathname.startsWith("/albums-index-cate-") ||
                 window.location.pathname.startsWith("/albums-index-page-") ||
+                window.location.pathname.startsWith("/albums-favorite_ranking") ||
                 window.location.pathname.startsWith("/search/") ||
                 window.location.pathname.startsWith("/search/index.php") ||
                 window.location.pathname === "/albums.html" ||
@@ -188,7 +189,21 @@ function applyBlocking() {
             );
 
             if (isListPage) {
-                function hideItems() {
+                let cachedBlockedKeywords = null;
+                async function fetchBlockedKeywords() {
+                    try {
+                        const data = await chrome.storage.local.get(['blockedKeywords']);
+                        cachedBlockedKeywords = data.blockedKeywords || [];
+                    } catch (e) {
+                        cachedBlockedKeywords = [];
+                    }
+                }
+
+                async function hideItems() {
+                    if (cachedBlockedKeywords === null) {
+                        await fetchBlockedKeywords();
+                    }
+
                     document.querySelectorAll(".li.gallary_item").forEach(item => {
                         // 1. Category Filtering via ::before content or class
                         let picBox = item.querySelector(".pic_box[class*='cate-']");
@@ -212,47 +227,62 @@ function applyBlocking() {
                             }
                         }
 
-                        // 2. Keyword Filtering
                         let titleElement = item.querySelector(".title a");
-                        if (titleElement) {
-                            let rawHTML = titleElement.innerHTML;
-                            let plainText = rawHTML.replace(/<\/?em>/g, "");
+                        if (!titleElement) return;
 
-                            // Title cleaning logic (remains active)
-                            let cleanedTitle = plainText.replace(/\[[^\]]*?汉化[^\]]*?\]/g, "").replace(/\s+/g, " ").trim();
-                            cleanedTitle = cleanedTitle.replace(/\[[^\]]*?个人[^\]]*?\]/g, "").replace(/\s+/g, " ").trim();
-                            cleanedTitle = cleanedTitle.replace(/\[[^\]]*?AI翻譯[^\]]*?\]/g, "").replace(/\s+/g, " ").trim();
-                            cleanedTitle = cleanedTitle.replace(/\[[^\]]*?個人[^\]]*?\]/g, "").replace(/\s+/g, " ").trim();
-                            cleanedTitle = cleanedTitle.replace(/\[[^\]]*?中国翻訳[^\]]*?\]/g, "").replace(/\s+/g, " ").trim();
-                            cleanedTitle = cleanedTitle.replace(/\[[^\]]*?漢化[^\]]*?\]/g, "").replace(/\s+/g, " ").trim();
-                            cleanedTitle = cleanedTitle.replace(/\[[^\]]*?DL版[^\]]*?\]/g, "").replace(/\s+/g, " ").trim();
-                            cleanedTitle = cleanedTitle.replace(/\[[^\]]*?無修正[^\]]*?\]/g, "").replace(/\s+/g, " ").trim();
+                        let rawHTML = titleElement.innerHTML;
+                        let plainText = rawHTML.replace(/<\/?em>/g, "");
 
-                            cleanedTitle = cleanedTitle.replace(/\([^\)]*?COMIC BAVEL[^\)]*?\)/g, "").replace(/\s+/g, " ").trim();
-                            cleanedTitle = cleanedTitle.replace(/\([^\)]*?COMIC アンスリウム[^\)]*?\)/g, "").replace(/\s+/g, " ").trim();
-                            cleanedTitle = cleanedTitle.replace(/\([^\)]*?コミックリブート[^\)]*?\)/g, "").replace(/\s+/g, " ").trim();
-                            cleanedTitle = cleanedTitle.replace(/\([^\)]*?アクションピザッツ[^\)]*?\)/g, "").replace(/\s+/g, " ").trim();
-                            cleanedTitle = cleanedTitle.replace(/\([^\)]*?快楽天[^\)]*?\)/g, "").replace(/\s+/g, " ").trim();
-                            cleanedTitle = cleanedTitle.replace(/\([^\)]*?COMIC 外楽[^\)]*?\)/g, "").replace(/\s+/g, " ").trim();
-                            cleanedTitle = cleanedTitle.replace(/\([^\)]*?コミックゼロス[^\)]*?\)/g, "").replace(/\s+/g, " ").trim();
-                            cleanedTitle = cleanedTitle.replace(/\([^\)]*?COMIC GEE[^\)]*?\)/g, "").replace(/\s+/g, " ").trim();
-                            cleanedTitle = cleanedTitle.replace(/\([^\)]*?COMIC LO[^\)]*?\)/g, "").replace(/\s+/g, " ").trim();
-                            cleanedTitle = cleanedTitle.replace(/\([^\)]*?COMIC 失楽天[^\)]*?\)/g, "").replace(/\s+/g, " ").trim();
-                            cleanedTitle = cleanedTitle.replace(/\([^\)]*?G-エッヂ[^\)]*?\)/g, "").replace(/\s+/g, " ").trim();
-                            cleanedTitle = cleanedTitle.replace(/\([^\)]*?コミックアンリアル[^\)]*?\)/g, "").replace(/\s+/g, " ").trim();
-                            
-                            if (titleElement.innerText !== cleanedTitle) {
-                                titleElement.innerText = cleanedTitle;
-                                titleElement.title = cleanedTitle;
+                        // 2. Blocked Keywords Hiding
+                        if (cachedBlockedKeywords.length > 0) {
+                            const titleText = titleElement.innerText || titleElement.textContent || "";
+                            const isBlockedByKeyword = cachedBlockedKeywords.some(kw => titleText.includes(kw));
+                            if (isBlockedByKeyword) {
+                                item.style.display = "none";
+                                return;
                             }
+                        }
+
+                        // 3. Title cleaning logic
+                        let cleanedTitle = plainText.replace(/\[[^\]]*?汉化[^\]]*?\]/g, "").replace(/\s+/g, " ").trim();
+                        cleanedTitle = cleanedTitle.replace(/\[[^\]]*?个人[^\]]*?\]/g, "").replace(/\s+/g, " ").trim();
+                        cleanedTitle = cleanedTitle.replace(/\[[^\]]*?AI翻譯[^\]]*?\]/g, "").replace(/\s+/g, " ").trim();
+                        cleanedTitle = cleanedTitle.replace(/\[[^\]]*?個人[^\]]*?\]/g, "").replace(/\s+/g, " ").trim();
+                        cleanedTitle = cleanedTitle.replace(/\[[^\]]*?中国翻訳[^\]]*?\]/g, "").replace(/\s+/g, " ").trim();
+                        cleanedTitle = cleanedTitle.replace(/\[[^\]]*?漢化[^\]]*?\]/g, "").replace(/\s+/g, " ").trim();
+                        cleanedTitle = cleanedTitle.replace(/\[[^\]]*?DL版[^\]]*?\]/g, "").replace(/\s+/g, " ").trim();
+                        cleanedTitle = cleanedTitle.replace(/\[[^\]]*?無修正[^\]]*?\]/g, "").replace(/\s+/g, " ").trim();
+
+                        cleanedTitle = cleanedTitle.replace(/\([^\)]*?COMIC BAVEL[^\)]*?\)/g, "").replace(/\s+/g, " ").trim();
+                        cleanedTitle = cleanedTitle.replace(/\([^\)]*?COMIC アンスリウム[^\)]*?\)/g, "").replace(/\s+/g, " ").trim();
+                        cleanedTitle = cleanedTitle.replace(/\([^\)]*?コミックリブート[^\)]*?\)/g, "").replace(/\s+/g, " ").trim();
+                        cleanedTitle = cleanedTitle.replace(/\([^\)]*?アクションピザッツ[^\)]*?\)/g, "").replace(/\s+/g, " ").trim();
+                        cleanedTitle = cleanedTitle.replace(/\([^\)]*?快楽天[^\)]*?\)/g, "").replace(/\s+/g, " ").trim();
+                        cleanedTitle = cleanedTitle.replace(/\([^\)]*?COMIC 外楽[^\)]*?\)/g, "").replace(/\s+/g, " ").trim();
+                        cleanedTitle = cleanedTitle.replace(/\([^\)]*?コミックゼロス[^\)]*?\)/g, "").replace(/\s+/g, " ").trim();
+                        cleanedTitle = cleanedTitle.replace(/\([^\)]*?COMIC GEE[^\)]*?\)/g, "").replace(/\s+/g, " ").trim();
+                        cleanedTitle = cleanedTitle.replace(/\([^\)]*?COMIC LO[^\)]*?\)/g, "").replace(/\s+/g, " ").trim();
+                        cleanedTitle = cleanedTitle.replace(/\([^\)]*?COMIC 失楽天[^\)]*?\)/g, "").replace(/\s+/g, " ").trim();
+                        cleanedTitle = cleanedTitle.replace(/\([^\)]*?G-エッヂ[^\)]*?\)/g, "").replace(/\s+/g, " ").trim();
+                        cleanedTitle = cleanedTitle.replace(/\([^\)]*?コミックアンリアル[^\)]*?\)/g, "").replace(/\s+/g, " ").trim();
+                        
+                        if (titleElement.innerText !== cleanedTitle) {
+                            titleElement.innerText = cleanedTitle;
+                            titleElement.title = cleanedTitle;
                         }
                     });
                 }
                 
-                hideItems();
+                fetchBlockedKeywords().then(() => hideItems());
                 
                 if (!window.acgWnacgObserverSet) {
-                    const observer = new MutationObserver(() => hideItems());
+                    let wnacgDebounceTimer;
+                    const observer = new MutationObserver(() => {
+                        clearTimeout(wnacgDebounceTimer);
+                        wnacgDebounceTimer = setTimeout(() => {
+                            hideItems().catch(e => console.debug("hideItems error:", e));
+                        }, 300);
+                    });
                     observer.observe(document.body, { childList: true, subtree: true });
                     window.acgWnacgObserverSet = true;
                 }
@@ -263,7 +293,11 @@ function applyBlocking() {
             hideChunmanForumThreads();
 
             if (!window.acgChunmanObserverSet) {
-                const observer = new MutationObserver(() => hideChunmanForumThreads());
+                let chunmanDebounceTimer;
+                const observer = new MutationObserver(() => {
+                    clearTimeout(chunmanDebounceTimer);
+                    chunmanDebounceTimer = setTimeout(() => hideChunmanForumThreads(), 300);
+                });
                 observer.observe(document.body, { childList: true, subtree: true });
                 window.acgChunmanObserverSet = true;
             }

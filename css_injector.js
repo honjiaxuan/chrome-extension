@@ -12,6 +12,6 @@
             }
         `;
         document.head.appendChild(style);
-        console.log("Injected CSS override and ad blocker for missav123.com");
+        console.log("Injected CSS override and ad blocker for missav");
     }
 })();

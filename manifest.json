@@ -23,7 +23,8 @@
     "https://gemini.google.com/*",
     "https://chatgpt.com/*",
     "https://claude.ai/*",
-    "https://missav123.com/*"
+    "https://missav123.com/*",
+    "https://missav.live/*"
   ],
   "content_security_policy": {
     "extension_pages": "script-src 'self'; object-src 'self'; img-src 'self' data: https://t2.gstatic.com;"
@@ -93,12 +94,12 @@
       "run_at": "document_end"
     },
     {
-      "matches": ["https://missav123.com/*"],
+      "matches": ["https://missav123.com/*", "https://missav.live/*"],
       "js": ["content_script_missav.js"],
       "run_at": "document_start"
     },
     {
-      "matches": ["https://missav123.com/*"],
+      "matches": ["https://missav123.com/*", "https://missav.live/*"],
       "js": ["css_injector.js"],
       "run_at": "document_end"
     }
