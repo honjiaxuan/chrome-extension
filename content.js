@@ -1,318 +1,284 @@
-// 读取存储的关键词列表，并隐藏匹配的 `li.gallary_item`
-console.log(window.location.hostname);
-console.log(window.location.pathname);
+// ACG 站点：访问拦截 + 内容过滤（isolated world）
+// 依赖同一次注入的 config.js
+(() => {
+  'use strict';
 
-// Create block overlay function
-function createBlockOverlay() {
-    chrome.runtime.sendMessage({ action: "popAndRedirect" });
-}
+  const CFG = globalThis.HJX_CONFIG;
+  if (!CFG) {
+    console.warn('[hjx] config.js 未加载，content.js 退出');
+    return;
+  }
 
-// Remove block overlay function
-function removeBlockOverlay() {
-    const overlay = document.getElementById('acg-block-overlay');
-    if (overlay) {
-        overlay.remove();
-        console.log("Removed block overlay from page");
+  const HIDDEN_ATTR = 'data-acg-hidden';
+  const ORIGINAL_TITLE_ATTR = 'data-acg-original-title';
+
+  const host = location.hostname;
+  const hostMatches = (hosts) => hosts.some((h) => host === h || host.endsWith('.' + h));
+
+  const isWnacg = hostMatches(['wnacg.com']);
+  const isChunman = hostMatches(CFG.chunman.hosts);
+  const hasAccessBlock = CFG.accessBlocks.some((b) => hostMatches(b.hosts));
+  const hasFilter = isWnacg || isChunman;
+
+  // 状态只全量读一次，之后靠 storage.onChanged 增量更新（不再每 30 秒重读）
+  const state = {
+    accessBlock: true,
+    contentFilter: true,
+    unblockUntil: 0,
+    keywords: []
+  };
+
+  const isUnblocked = () => Date.now() < state.unblockUntil;
+  const filtersActive = () => state.contentFilter && !isUnblocked();
+
+  const storageGet = (keys) =>
+    chrome.storage.local.get(keys).catch(() => {
+      // 扩展被重载/更新后上下文失效，静默降级
+      return {};
+    });
+
+  function readSettings() {
+    return storageGet(['extensionEnabled', 'contentFilterEnabled', 'unblockUntil', 'blockedKeywords']).then((d) => {
+      state.accessBlock = d.extensionEnabled !== false;
+      state.contentFilter = d.contentFilterEnabled !== false;
+      state.unblockUntil = Number(d.unblockUntil) || 0;
+      state.keywords = Array.isArray(d.blockedKeywords) ? d.blockedKeywords.filter(Boolean) : [];
+    });
+  }
+
+  // ---------- 一次性跳转 ----------
+
+  function runRedirects() {
+    for (const rule of CFG.redirects) {
+      if (!hostMatches(rule.hosts)) continue;
+      const m = location.pathname.match(rule.from);
+      if (!m) continue;
+      const target = rule.to(m);
+      if (target && target !== location.pathname) {
+        console.log('[hjx] redirect ' + location.pathname + ' -> ' + target);
+        location.replace(target);
+      }
+      return;
     }
-}
+  }
 
-const CHUNMAN_BLOCKED_TITLE_KEYWORDS = ["母", "妈", "媽", "偽娘", "伪娘"];
-const CHUNMAN_HIDDEN_ATTRIBUTE = "data-acg-chunman-hidden";
+  // ---------- 访问拦截 ----------
+  // 真正的机制不是页面遮罩：命中后让后台把 OneTab 队列里的一条弹出来顶替当前标签。
+  // 队列为空时后台会跳到 onetab.html。
 
-function restoreChunmanHiddenThreads() {
-    document.querySelectorAll(`[${CHUNMAN_HIDDEN_ATTRIBUTE}="true"]`).forEach(item => {
-        item.style.display = "";
-        item.removeAttribute(CHUNMAN_HIDDEN_ATTRIBUTE);
+  function blockedPageName() {
+    for (const block of CFG.accessBlocks) {
+      if (!hostMatches(block.hosts)) continue;
+      if (block.paths.includes(location.pathname)) return block.name;
+    }
+    return null;
+  }
+
+  // 同一次导航只顶替一次，避免轮询/observer 重复发消息
+  let lastBlockKey = '';
+
+  function applyAccessBlock() {
+    if (!state.accessBlock || isUnblocked()) return;
+    const name = blockedPageName();
+    if (!name) return;
+    const key = name + '|' + location.pathname;
+    if (key === lastBlockKey) return;
+    lastBlockKey = key;
+    console.log('[hjx] 拦截 ' + name + ' ' + location.pathname);
+    try {
+      chrome.runtime.sendMessage({ action: 'popAndRedirect' }).catch(() => {});
+    } catch (e) {
+      // 扩展上下文失效
+    }
+  }
+
+  // ---------- wnacg ----------
+
+  const isWnacgListPage = () =>
+    CFG.wnacg.listExact.includes(location.pathname) ||
+    CFG.wnacg.listPrefixes.some((p) => location.pathname.startsWith(p));
+
+  function isBlockedCategory(item) {
+    const picBox = item.querySelector(".pic_box[class*='cate-']");
+    if (!picBox) return false;
+    if (CFG.wnacg.blockedClasses.some((cls) => picBox.classList.contains(cls))) return true;
+
+    const raw = window.getComputedStyle(picBox, '::before').getPropertyValue('content') || '';
+    const normalized = raw
+      .replace(/['"]/g, '')
+      .replace(/／/g, '/')
+      .replace(/＆/g, '&');
+    return CFG.wnacg.blockedCategoryText.some((text) => normalized.includes(text));
+  }
+
+  function cleanTitle(text) {
+    let out = text;
+    for (const re of CFG.wnacg.cleanupPatterns) out = out.replace(re, '');
+    return out.replace(/\s+/g, ' ').trim();
+  }
+
+  function hideItem(item) {
+    item.style.display = 'none';
+    item.setAttribute(HIDDEN_ATTR, 'wnacg');
+  }
+
+  function showItem(item) {
+    if (!item.hasAttribute(HIDDEN_ATTR)) return;
+    item.style.display = '';
+    item.removeAttribute(HIDDEN_ATTR);
+  }
+
+  function hideWnacgItems() {
+    if (!isWnacgListPage()) return;
+
+    document.querySelectorAll('.li.gallary_item').forEach((item) => {
+      if (isBlockedCategory(item)) {
+        hideItem(item);
+        return;
+      }
+
+      const titleEl = item.querySelector('.title a');
+      if (!titleEl) return;
+
+      const titleText = titleEl.innerText || titleEl.textContent || '';
+      if (state.keywords.some((kw) => titleText.includes(kw))) {
+        hideItem(item);
+        return;
+      }
+
+      // 关键词被删掉之后要能恢复
+      showItem(item);
+
+      // 标题清洗：原文存进属性，解锁/关过滤时可以还原（旧版改了就再也回不去）
+      if (!titleEl.hasAttribute(ORIGINAL_TITLE_ATTR)) {
+        const original = titleEl.innerText || '';
+        const cleaned = cleanTitle(original);
+        if (cleaned && cleaned !== original) {
+          titleEl.setAttribute(ORIGINAL_TITLE_ATTR, original);
+          titleEl.innerText = cleaned;
+          titleEl.title = cleaned;
+        }
+      }
     });
-}
+  }
 
-function titleContainsBlockedKeyword(titleText) {
-    return CHUNMAN_BLOCKED_TITLE_KEYWORDS.some(keyword => titleText.includes(keyword));
-}
-
-function hideChunmanForumThreads() {
-    document.querySelectorAll("th.forumtit").forEach(threadCell => {
-        const titleElement = threadCell.querySelector("a.s.xst");
-        if (!titleElement) {
-            return;
-        }
-
-        const titleText = titleElement.textContent.replace(/\s+/g, " ").trim();
-        const targetElement = threadCell.closest("tr") || threadCell;
-
-        if (!titleText) {
-            return;
-        }
-
-        if (titleContainsBlockedKeyword(titleText)) {
-            targetElement.style.display = "none";
-            targetElement.setAttribute(CHUNMAN_HIDDEN_ATTRIBUTE, "true");
-            return;
-        }
-
-        if (targetElement.getAttribute(CHUNMAN_HIDDEN_ATTRIBUTE) === "true") {
-            targetElement.style.display = "";
-            targetElement.removeAttribute(CHUNMAN_HIDDEN_ATTRIBUTE);
-        }
+  function restoreWnacg() {
+    document.querySelectorAll('[' + HIDDEN_ATTR + '="wnacg"]').forEach((item) => {
+      item.style.display = '';
+      item.removeAttribute(HIDDEN_ATTR);
     });
-}
+    document.querySelectorAll('[' + ORIGINAL_TITLE_ATTR + ']').forEach((el) => {
+      el.innerText = el.getAttribute(ORIGINAL_TITLE_ATTR) || '';
+      el.removeAttribute(ORIGINAL_TITLE_ATTR);
+    });
+  }
 
-// Listen for messages from popup or background script
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-    if (message.action === "refreshBlocking") {
-        applyBlocking();
-        sendResponse({ success: true });
-        return true;
+  // ---------- chunman4 ----------
+
+  function hideChunmanThreads() {
+    document.querySelectorAll('th.forumtit').forEach((cell) => {
+      const titleEl = cell.querySelector('a.s.xst');
+      if (!titleEl) return;
+      const titleText = (titleEl.textContent || '').replace(/\s+/g, ' ').trim();
+      if (!titleText) return;
+
+      const row = cell.closest('tr') || cell;
+      const blocked = CFG.chunman.blockedTitleKeywords.some((kw) => titleText.includes(kw));
+
+      if (blocked) {
+        row.style.display = 'none';
+        row.setAttribute(HIDDEN_ATTR, 'chunman');
+      } else {
+        showItem(row);
+      }
+    });
+  }
+
+  function restoreChunman() {
+    document.querySelectorAll('[' + HIDDEN_ATTR + '="chunman"]').forEach((row) => {
+      row.style.display = '';
+      row.removeAttribute(HIDDEN_ATTR);
+    });
+  }
+
+  // ---------- 调度 ----------
+
+  function apply() {
+    if (hasAccessBlock) applyAccessBlock();
+    if (!hasFilter) return;
+
+    if (!filtersActive()) {
+      if (isWnacg) restoreWnacg();
+      if (isChunman) restoreChunman();
+      return;
     }
 
-    if (message.action === "removeOverlay") {
-        removeBlockOverlay();
-        sendResponse({ success: true });
-    } else if (message.action === "addOverlay") {
-        createBlockOverlay();
-        sendResponse({ success: true });
+    if (isWnacg) hideWnacgItems();
+    if (isChunman) hideChunmanThreads();
+  }
+
+  // observer 只注册一次；回调里先看开关状态，临时解锁期间不会再隐藏/改标题
+  function watchDom() {
+    let timer;
+    const observer = new MutationObserver(() => {
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        if (!filtersActive()) {
+          if (isWnacg) restoreWnacg();
+          if (isChunman) restoreChunman();
+          return;
+        }
+        if (isWnacg) hideWnacgItems();
+        if (isChunman) hideChunmanThreads();
+      }, 300);
+    });
+    observer.observe(document.documentElement, { childList: true, subtree: true });
+  }
+
+  // SPA 跳转即时感知：popstate/hashchange + pushState 包裹 + 1 秒 href 兜底
+  // isolated world 拦不到页面自己调用的 pushState，所以兜底轮询不能省
+  function watchNavigation() {
+    let lastHref = location.href;
+    const onMaybeNavigate = () => {
+      if (location.href === lastHref) return;
+      lastHref = location.href;
+      lastBlockKey = '';
+      apply();
+    };
+
+    for (const method of ['pushState', 'replaceState']) {
+      const original = history[method];
+      if (typeof original !== 'function') continue;
+      history[method] = function wrapped(...args) {
+        const result = original.apply(this, args);
+        queueMicrotask(onMaybeNavigate);
+        return result;
+      };
     }
-    return true;
-});
 
+    addEventListener('popstate', onMaybeNavigate);
+    addEventListener('hashchange', onMaybeNavigate);
+    setInterval(onMaybeNavigate, 1000);
+  }
 
-
-
-
-// --- Independent Redirect Logic (Always Active) ---
-
-// Handle JMComic album to photo redirect
-if (window.location.hostname === "jmcomic-zzz.one" && window.location.pathname.startsWith("/album/")) {
-    const albumId = window.location.pathname.replace("/album/", "").split("/")[0];
-    if (albumId) {
-        const photoUrl = `https://jmcomic-zzz.one/photo/${albumId}`;
-        console.log(`Redirecting from ${window.location.href} to ${photoUrl}`);
-        window.location.href = photoUrl;
-    }
-}
-
-// Handle WNACG photos-index-aid to photos-slide-aid redirect
-if (window.location.hostname.endsWith("wnacg.com") && window.location.pathname.startsWith("/photos-index-aid-")) {
-    const aid = window.location.pathname.match(/\/photos-index-aid-(\d+)/)?.[1];
-    if (aid && /^\d+$/.test(aid)) {
-        const slideUrl = `https://${window.location.hostname}/photos-slide-aid-${aid}`;
-        console.log(`Redirecting from ${window.location.href} to ${slideUrl}`);
-        window.location.href = slideUrl;
-    }
-}
-
-// --- End of Independent Redirect Logic ---
-
-// Check if sites should be temporarily unblocked
-function checkIfTemporarilyUnblocked() {
-    return safeStorageGet(["unblockUntil"]).then(data => {
-        const unblockUntil = data.unblockUntil || 0;
-        const currentTime = Date.now();
-        return currentTime < unblockUntil;
+  function watchStorage() {
+    chrome.storage.onChanged.addListener((changes, area) => {
+      if (area !== 'local') return;
+      const relevant = ['extensionEnabled', 'contentFilterEnabled', 'unblockUntil', 'blockedKeywords'];
+      if (!relevant.some((key) => key in changes)) return;
+      readSettings().then(apply);
     });
-}
+  }
 
-function safeStorageGet(keys) {
-    return new Promise((resolve) => {
-        try {
-            chrome.storage.local.get(keys, (data) => {
-                if (chrome.runtime.lastError) {
-                    console.debug("Storage access failed (extension context likely invalidated)");
-                    resolve({});
-                } else {
-                    resolve(data);
-                }
-            });
-        } catch (e) {
-            console.debug("Extension context invalidated, stopping storage access");
-            resolve({});
-        }
-    });
-}
+  runRedirects();
 
-// Function to apply all blocking logic
-function applyBlocking() {
-    // 1. Check for Access Blocking Overlays (Affected by Switch)
-    safeStorageGet(["extensionEnabled"]).then(data => {
-        if (data.extensionEnabled === false) {
-            console.log("Access blocking disabled by master switch");
-            removeBlockOverlay();
-        } else {
-            checkIfTemporarilyUnblocked().then(isUnblocked => {
-                if (isUnblocked) {
-                    removeBlockOverlay();
-                } else {
-                    // Block access to zhihu.com homepage
-                    if (window.location.href === "https://www.zhihu.com/" ||
-                        window.location.href === "https://www.zhihu.com/follow" ||
-                        window.location.href === "https://www.zhihu.com/hot" ||
-                        window.location.href === "https://www.zhihu.com/column-square" 
-                    ) {
-                        createBlockOverlay();
-                        console.log("Blocked access to zhihu.com homepage");
-                    } 
-                    // Block access to xiaohongshu.com/explore
-                    else if (window.location.href === "https://www.xiaohongshu.com/explore" || 
-                             window.location.href === "https://www.xiaohongshu.com/explore?channel_id=homefeed_recommend") {
-                        createBlockOverlay();
-                        console.log("Blocked access to xiaohongshu.com explore page");
-                    }
-                }
-            });
-        }
-    });
+  // 纯跳转站点（jmcomic / aaccnn / 8xbook）：不读存储、不注册观察者
+  if (!hasAccessBlock && !hasFilter) return;
 
-    // 2. Continuous Filtering & Keyword Logic (Always Active - NOT affected by switch)
-    checkIfTemporarilyUnblocked().then(isUnblocked => {
-        if (isUnblocked) {
-            console.log("Filters temporarily disabled via meditation/unblock text");
-            // Show all hidden elements if they were hidden by this script
-            document.querySelectorAll(".li.gallary_item").forEach(item => {
-                if (item.style.display === "none") {
-                    item.style.display = "";
-                }
-            });
-            restoreChunmanHiddenThreads();
-            return;
-        }
-
-        // Apply filters for wnacg.com
-        if (window.location.hostname.endsWith("wnacg.com")) {
-            const isListPage = (
-                window.location.pathname.startsWith("/albums-index-cate-") ||
-                window.location.pathname.startsWith("/albums-index-page-") ||
-                window.location.pathname.startsWith("/albums-favorite_ranking") ||
-                window.location.pathname.startsWith("/search/") ||
-                window.location.pathname.startsWith("/search/index.php") ||
-                window.location.pathname === "/albums.html" ||
-                window.location.pathname === "/"
-            );
-
-            if (isListPage) {
-                let cachedBlockedKeywords = null;
-                async function fetchBlockedKeywords() {
-                    try {
-                        const data = await chrome.storage.local.get(['blockedKeywords']);
-                        cachedBlockedKeywords = data.blockedKeywords || [];
-                    } catch (e) {
-                        cachedBlockedKeywords = [];
-                    }
-                }
-
-                async function hideItems() {
-                    if (cachedBlockedKeywords === null) {
-                        await fetchBlockedKeywords();
-                    }
-
-                    document.querySelectorAll(".li.gallary_item").forEach(item => {
-                        // 1. Category Filtering via ::before content or class
-                        let picBox = item.querySelector(".pic_box[class*='cate-']");
-                        if (picBox) {
-                            const rawContent = window.getComputedStyle(picBox, '::before').getPropertyValue('content');
-                            // Normalize content: remove quotes and handle both full-width and half-width slashes/ampersands
-                            const normalizedContent = rawContent.replace(/['"]/g, "")
-                                .replace(/／/g, "/")
-                                .replace(/＆/g, "&");
-
-                            const isBlockedCategory = 
-                                normalizedContent.includes("/日語") || 
-                                normalizedContent.includes("同人誌/English") ||
-                                picBox.classList.contains("cate-14") || // Direct class check for Magazine/Short Stories
-                                picBox.classList.contains("cate-12") || // Doujinshi
-                                picBox.classList.contains("cate-13");   // Single Volumes
-
-                            if (isBlockedCategory) {
-                                item.style.display = "none";
-                                return;
-                            }
-                        }
-
-                        let titleElement = item.querySelector(".title a");
-                        if (!titleElement) return;
-
-                        let rawHTML = titleElement.innerHTML;
-                        let plainText = rawHTML.replace(/<\/?em>/g, "");
-
-                        // 2. Blocked Keywords Hiding
-                        if (cachedBlockedKeywords.length > 0) {
-                            const titleText = titleElement.innerText || titleElement.textContent || "";
-                            const isBlockedByKeyword = cachedBlockedKeywords.some(kw => titleText.includes(kw));
-                            if (isBlockedByKeyword) {
-                                item.style.display = "none";
-                                return;
-                            }
-                        }
-
-                        // 3. Title cleaning logic
-                        let cleanedTitle = plainText.replace(/\[[^\]]*?汉化[^\]]*?\]/g, "").replace(/\s+/g, " ").trim();
-                        cleanedTitle = cleanedTitle.replace(/\[[^\]]*?个人[^\]]*?\]/g, "").replace(/\s+/g, " ").trim();
-                        cleanedTitle = cleanedTitle.replace(/\[[^\]]*?AI翻譯[^\]]*?\]/g, "").replace(/\s+/g, " ").trim();
-                        cleanedTitle = cleanedTitle.replace(/\[[^\]]*?個人[^\]]*?\]/g, "").replace(/\s+/g, " ").trim();
-                        cleanedTitle = cleanedTitle.replace(/\[[^\]]*?中国翻訳[^\]]*?\]/g, "").replace(/\s+/g, " ").trim();
-                        cleanedTitle = cleanedTitle.replace(/\[[^\]]*?漢化[^\]]*?\]/g, "").replace(/\s+/g, " ").trim();
-                        cleanedTitle = cleanedTitle.replace(/\[[^\]]*?DL版[^\]]*?\]/g, "").replace(/\s+/g, " ").trim();
-                        cleanedTitle = cleanedTitle.replace(/\[[^\]]*?無修正[^\]]*?\]/g, "").replace(/\s+/g, " ").trim();
-
-                        cleanedTitle = cleanedTitle.replace(/\([^\)]*?COMIC BAVEL[^\)]*?\)/g, "").replace(/\s+/g, " ").trim();
-                        cleanedTitle = cleanedTitle.replace(/\([^\)]*?COMIC アンスリウム[^\)]*?\)/g, "").replace(/\s+/g, " ").trim();
-                        cleanedTitle = cleanedTitle.replace(/\([^\)]*?コミックリブート[^\)]*?\)/g, "").replace(/\s+/g, " ").trim();
-                        cleanedTitle = cleanedTitle.replace(/\([^\)]*?アクションピザッツ[^\)]*?\)/g, "").replace(/\s+/g, " ").trim();
-                        cleanedTitle = cleanedTitle.replace(/\([^\)]*?快楽天[^\)]*?\)/g, "").replace(/\s+/g, " ").trim();
-                        cleanedTitle = cleanedTitle.replace(/\([^\)]*?COMIC 外楽[^\)]*?\)/g, "").replace(/\s+/g, " ").trim();
-                        cleanedTitle = cleanedTitle.replace(/\([^\)]*?コミックゼロス[^\)]*?\)/g, "").replace(/\s+/g, " ").trim();
-                        cleanedTitle = cleanedTitle.replace(/\([^\)]*?COMIC GEE[^\)]*?\)/g, "").replace(/\s+/g, " ").trim();
-                        cleanedTitle = cleanedTitle.replace(/\([^\)]*?COMIC LO[^\)]*?\)/g, "").replace(/\s+/g, " ").trim();
-                        cleanedTitle = cleanedTitle.replace(/\([^\)]*?COMIC 失楽天[^\)]*?\)/g, "").replace(/\s+/g, " ").trim();
-                        cleanedTitle = cleanedTitle.replace(/\([^\)]*?G-エッヂ[^\)]*?\)/g, "").replace(/\s+/g, " ").trim();
-                        cleanedTitle = cleanedTitle.replace(/\([^\)]*?コミックアンリアル[^\)]*?\)/g, "").replace(/\s+/g, " ").trim();
-                        
-                        if (titleElement.innerText !== cleanedTitle) {
-                            titleElement.innerText = cleanedTitle;
-                            titleElement.title = cleanedTitle;
-                        }
-                    });
-                }
-                
-                fetchBlockedKeywords().then(() => hideItems());
-                
-                if (!window.acgWnacgObserverSet) {
-                    let wnacgDebounceTimer;
-                    const observer = new MutationObserver(() => {
-                        clearTimeout(wnacgDebounceTimer);
-                        wnacgDebounceTimer = setTimeout(() => {
-                            hideItems().catch(e => console.debug("hideItems error:", e));
-                        }, 300);
-                    });
-                    observer.observe(document.body, { childList: true, subtree: true });
-                    window.acgWnacgObserverSet = true;
-                }
-            }
-        }
-
-        if (window.location.hostname === "chunman4.com") {
-            hideChunmanForumThreads();
-
-            if (!window.acgChunmanObserverSet) {
-                let chunmanDebounceTimer;
-                const observer = new MutationObserver(() => {
-                    clearTimeout(chunmanDebounceTimer);
-                    chunmanDebounceTimer = setTimeout(() => hideChunmanForumThreads(), 300);
-                });
-                observer.observe(document.body, { childList: true, subtree: true });
-                window.acgChunmanObserverSet = true;
-            }
-        }
-
-
-
-
-    });
-}
-
-// Set up periodic check for unblock status (every 30 seconds)
-setInterval(() => {
-    applyBlocking();
-}, 30000);
-
-// Execute main logic after checking unblock status
-applyBlocking();
+  readSettings().then(() => {
+    apply();
+    watchStorage();
+    watchNavigation();
+    if (hasFilter) watchDom();
+  });
+})();

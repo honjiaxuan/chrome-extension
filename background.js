@@ -1,10 +1,34 @@
-
-const wt = "2.10";
+// OneTab 后端 + ACG 拦截后端
+// 版本号唯一来源是 manifest.json（options.html 与 OneTab 前端也都改成读它）
+const wt = chrome.runtime.getManifest().version;
 
 chrome.runtime.onInstalled.addListener(() => {
-    console.log('ACG Website Filter extension installed.');
     createContextMenu();
 });
+
+// ---------- 分组存储：兼容 tabGroups / sessionStore.tabGroups 两套键 ----------
+
+async function readGroups() {
+    const data = await chrome.storage.local.get(null);
+    if (Array.isArray(data.tabGroups)) return { groups: data.tabGroups, storageKey: 'tabGroups' };
+    if (Array.isArray(data.sessionStore?.tabGroups)) {
+        return { groups: data.sessionStore.tabGroups, storageKey: 'sessionStore' };
+    }
+    return { groups: [], storageKey: 'tabGroups' };
+}
+
+async function writeGroups(groups, storageKey) {
+    if (storageKey === 'sessionStore') {
+        const { sessionStore = {} } = await chrome.storage.local.get('sessionStore');
+        await chrome.storage.local.set({ sessionStore: { ...sessionStore, tabGroups: groups } });
+    } else {
+        await chrome.storage.local.set({ tabGroups: groups });
+    }
+}
+
+const newId = () => Math.random().toString(36).substring(2);
+
+// ---------- 右键菜单 ----------
 
 function createContextMenu() {
     chrome.contextMenus.removeAll(() => {
@@ -92,26 +116,21 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
             break;
         case 'sendAllTabsExceptThisToOneTab':
             chrome.tabs.query({ currentWindow: true }, (tabs) => {
-                const otherTabs = tabs.filter(t => t.id !== tab.id);
-                sendTabsToOneTab(otherTabs);
+                sendTabsToOneTab(tabs.filter((t) => t.id !== tab.id));
             });
             break;
         case 'sendLeftTabsToOneTab':
             chrome.tabs.query({ currentWindow: true }, (tabs) => {
-                const leftTabs = tabs.filter(t => t.index < tab.index);
-                sendTabsToOneTab(leftTabs);
+                sendTabsToOneTab(tabs.filter((t) => t.index < tab.index));
             });
             break;
         case 'sendRightTabsToOneTab':
             chrome.tabs.query({ currentWindow: true }, (tabs) => {
-                const rightTabs = tabs.filter(t => t.index > tab.index);
-                sendTabsToOneTab(rightTabs);
+                sendTabsToOneTab(tabs.filter((t) => t.index > tab.index));
             });
             break;
         case 'sendThisWebLinkToOneTab':
-            if (info.linkUrl) {
-                sendTabsToOneTab([{ url: info.linkUrl, title: info.linkUrl }], true);
-            }
+            if (info.linkUrl) sendTabsToOneTab([{ url: info.linkUrl, title: info.linkUrl }], true);
             break;
         case 'excludeWebSiteFromOneTab':
             if (tab && tab.url) excludeUrl(tab.url, false);
@@ -122,8 +141,10 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
     }
 });
 
+// ---------- 标签页操作 ----------
+
 async function displayOneTab() {
-    const onetabUrl = chrome.runtime.getURL("onetab.html");
+    const onetabUrl = chrome.runtime.getURL('onetab.html');
     const tabs = await chrome.tabs.query({ url: onetabUrl });
     if (tabs.length > 0) {
         chrome.tabs.update(tabs[0].id, { active: true });
@@ -134,56 +155,55 @@ async function displayOneTab() {
 }
 
 async function sendTabsToOneTab(tabs, force = false) {
-    const onetabUrl = chrome.runtime.getURL("onetab.html");
+    const onetabUrl = chrome.runtime.getURL('onetab.html');
     const settings = await chrome.storage.local.get(['optionPinnedTabsAllow', 'excludedUrls', 'excludedDomains']);
     const allowPinned = settings.optionPinnedTabsAllow === true;
     const excludedUrls = settings.excludedUrls || [];
     const excludedDomains = settings.excludedDomains || [];
 
-    const filteredTabs = tabs.filter(t => {
+    const filteredTabs = tabs.filter((t) => {
         if (!t.url) return false;
-        if (t.url === onetabUrl || t.url.startsWith("chrome-extension://")) return false;
+        if (t.url === onetabUrl || t.url.startsWith('chrome-extension://')) return false;
         if (!force && t.pinned && !allowPinned) return false;
-        
+
         try {
             const url = new URL(t.url);
             if (excludedUrls.includes(t.url)) return false;
-            if (excludedDomains.some(d => url.hostname === d || url.hostname.endsWith('.' + d))) return false;
+            if (excludedDomains.some((d) => url.hostname === d || url.hostname.endsWith('.' + d))) return false;
         } catch (e) {
+            // about: / data: 之类解析失败的直接放过，由下面 tabs.remove 决定
         }
-        
+
         return true;
     });
 
-    if (filteredTabs.length > 0) {
-        const newGroup = {
-            id: Math.random().toString(36).substring(2),
-            createDate: Date.now(),
-            tabsMeta: filteredTabs.map(t => ({
-                id: Math.random().toString(36).substring(2),
-                url: t.url,
-                title: t.title || t.url
-            }))
-        };
-        const { tabGroups = [] } = await chrome.storage.local.get('tabGroups');
-        tabGroups.unshift(newGroup);
-        await chrome.storage.local.set({ tabGroups });
-        
-        const tabsToRemove = filteredTabs.filter(t => t.id !== undefined).map(t => t.id);
-        if (tabsToRemove.length > 0) {
-            await chrome.tabs.remove(tabsToRemove);
-        }
-    }
+    if (filteredTabs.length === 0) return;
+
+    const newGroup = {
+        id: newId(),
+        createDate: Date.now(),
+        tabsMeta: filteredTabs.map((t) => ({
+            id: newId(),
+            url: t.url,
+            title: t.title || t.url
+        }))
+    };
+
+    const { groups, storageKey } = await readGroups();
+    groups.unshift(newGroup);
+    await writeGroups(groups, storageKey);
+
+    const tabsToRemove = filteredTabs.filter((t) => t.id !== undefined).map((t) => t.id);
+    if (tabsToRemove.length > 0) await chrome.tabs.remove(tabsToRemove);
 }
 
 async function excludeUrl(urlStr, isDomain) {
     try {
         const url = new URL(urlStr);
         if (isDomain) {
-            const domain = url.hostname;
             const { excludedDomains = [] } = await chrome.storage.local.get('excludedDomains');
-            if (!excludedDomains.includes(domain)) {
-                excludedDomains.push(domain);
+            if (!excludedDomains.includes(url.hostname)) {
+                excludedDomains.push(url.hostname);
                 await chrome.storage.local.set({ excludedDomains });
             }
         } else {
@@ -194,236 +214,246 @@ async function excludeUrl(urlStr, isDomain) {
             }
         }
     } catch (e) {
-        console.error("Invalid URL for exclusion:", urlStr);
+        console.error('Invalid URL for exclusion:', urlStr);
     }
 }
 
+// 从队列里弹出一条顶替当前标签（访问拦截的落地动作）
 async function popFirstTabAndRedirect(tabId) {
-    const localData = await chrome.storage.local.get(null);
-    let tabGroups = localData.tabGroups;
-    let targetKey = 'tabGroups';
-    
-    if (!tabGroups && localData.sessionStore?.tabGroups) {
-        tabGroups = localData.sessionStore.tabGroups;
-        targetKey = 'sessionStore.tabGroups';
-    }
-    
-    tabGroups = tabGroups || [];
-    
-    if (tabGroups.length === 0 || !tabGroups[0].tabsMeta || tabGroups[0].tabsMeta.length === 0) {
-        chrome.tabs.update(tabId, { url: chrome.runtime.getURL("/onetab.html") });
+    const { groups, storageKey } = await readGroups();
+    const first = groups[0];
+
+    if (!first || !Array.isArray(first.tabsMeta) || first.tabsMeta.length === 0) {
+        chrome.tabs.update(tabId, { url: chrome.runtime.getURL('onetab.html') });
         return;
     }
 
-    const group = tabGroups[0];
-    const tabToOpen = group.tabsMeta[0];
-    const tabUrl = tabToOpen.url;
+    const next = first.tabsMeta.shift();
+    if (first.tabsMeta.length === 0) groups.shift();
+    await writeGroups(groups, storageKey);
 
-    group.tabsMeta.shift();
-    if (group.tabsMeta.length === 0) {
-        tabGroups.shift();
-    }
-    
-    if (targetKey === 'sessionStore.tabGroups') {
-        const sessionStore = localData.sessionStore || {};
-        sessionStore.tabGroups = tabGroups;
-        await chrome.storage.local.set({ sessionStore });
-    } else {
-        await chrome.storage.local.set({ tabGroups });
-    }
-
-    chrome.tabs.update(tabId, { url: tabUrl });
+    chrome.tabs.update(tabId, { url: next.url });
 }
 
+// 恢复整组（OneTab 的 restore all）
+async function restoreGroup(groupId, opener) {
+    const { groups } = await readGroups();
+    const group = groups.find((g) => g.id === groupId);
+    if (!group || !Array.isArray(group.tabsMeta) || group.tabsMeta.length === 0) return;
+
+    const urls = group.tabsMeta.map((t) => t.url).filter(Boolean);
+    if (urls.length === 0) return;
+
+    if (typeof opener === 'string' && opener.startsWith('newWindow')) {
+        await chrome.windows.create({ url: urls });
+        return;
+    }
+    for (const url of urls) {
+        await chrome.tabs.create({ url });
+    }
+}
+
+// 组内 / 跨组移动标签（拖拽）
+async function moveTab(sourceGroupId, targetGroupId, tabId, targetIndex) {
+    const { groups, storageKey } = await readGroups();
+    const source = groups.find((g) => g.id === sourceGroupId);
+    const target = groups.find((g) => g.id === targetGroupId);
+    if (!source || !target) return false;
+
+    const index = source.tabsMeta.findIndex((t) => t.id === tabId);
+    if (index === -1) return false;
+
+    const [moved] = source.tabsMeta.splice(index, 1);
+    const insertAt = Number.isInteger(targetIndex)
+        ? Math.max(0, Math.min(targetIndex, target.tabsMeta.length))
+        : target.tabsMeta.length;
+    target.tabsMeta.splice(insertAt, 0, moved);
+
+    // 源组空了就删掉（跨组移动时）
+    const cleaned = groups.filter((g) => g.tabsMeta.length > 0 || g.id === target.id);
+    await writeGroups(cleaned, storageKey);
+    return true;
+}
+
+// ---------- 消息路由 ----------
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    // 内容脚本专用：访问拦截时把队列里的一条顶替当前标签
     if (message.action === 'popAndRedirect') {
-        popFirstTabAndRedirect(sender.tab.id);
+        const tabId = sender.tab?.id;
+        if (tabId !== undefined) {
+            popFirstTabAndRedirect(tabId).catch((e) => console.warn('[popAndRedirect]', e));
+        }
         sendResponse({ success: true });
         return true;
     }
+
     if (message.action === 'setTemporaryUnblock') {
-        chrome.storage.local.set({
-            unblockUntil: message.unblockUntil
-        }, () => {
-            sendResponse({
-                success: true
-            });
-        });
+        chrome.storage.local
+            .set({ unblockUntil: Number(message.unblockUntil) || 0 })
+            .then(() => sendResponse({ success: true }))
+            .catch((e) => sendResponse({ success: false, error: e.message }));
         return true;
     }
 
-    if (message.type) {
-        console.log("[Background] OneTab Message Received:", message.type, message.args);
-        
-        const handleMessage = async () => {
-            try {
-                let responseData;
-                if (message.type === 'getState') {
+    if (!message.type) return false;
+
+    (async () => {
+        try {
+            let responseData;
+
+            switch (message.type) {
+                case 'getState': {
                     const localData = await chrome.storage.local.get(null);
                     const sessionData = chrome.storage.session ? await chrome.storage.session.get(null) : {};
-                    
                     const tabGroups = localData.tabGroups || localData.sessionStore?.tabGroups || [];
                     responseData = {
-                        tabGroups: tabGroups,
+                        tabGroups,
                         ...localData,
                         ...(localData.sessionStore || {}),
                         ...sessionData
                     };
-                } else if (message.type === 'corePing') {
+                    break;
+                }
+                case 'corePing':
                     responseData = { pong: wt };
-                } else if (message.type === 'Ca') {
+                    break;
+                case 'Ca':
                     responseData = false;
-                } else if (message.type === 'Ba' || message.type === 'Na' || message.type === 'Ra') {
-                    responseData = true;
-                } else if (message.type === 've') {
+                    break;
+                case 've': {
                     const key = message.args?.[0];
                     const localData = await chrome.storage.local.get(null);
-                    responseData = localData[key] || "";
-                } else if (message.type === 'kt' || message.type === 'Je') {
+                    responseData = localData[key] || '';
+                    break;
+                }
+                case 'kt':
+                case 'Je': {
                     const url = message.type === 'kt' ? chrome.runtime.getURL(message.args[0]) : message.args[0];
                     chrome.tabs.create({ url });
                     responseData = {};
-                } else if (message.type === 'Kt') {
+                    break;
+                }
+                case 'Kt': {
                     const tabs = await chrome.tabs.query({ currentWindow: true });
                     await sendTabsToOneTab(tabs);
                     responseData = {};
-                } else if (message.type === 'Ua') {
+                    break;
+                }
+                case 'Ua':
                     responseData = {};
-                } else if (message.type === 'Da') {
-                    const groupId = message.args[0];
-                    const { tabGroups = [] } = await chrome.storage.local.get('tabGroups');
-                    const newGroups = tabGroups.filter(g => g.id !== groupId);
-                    await chrome.storage.local.set({ tabGroups: newGroups });
+                    break;
+                case 'Da': {
+                    const { groups, storageKey } = await readGroups();
+                    await writeGroups(groups.filter((g) => g.id !== message.args[0]), storageKey);
                     responseData = {};
-                } else if (message.type === 'Na') {
-                    const groupId = message.args[0];
-                    const { tabGroups = [] } = await chrome.storage.local.get('tabGroups');
-                    const group = tabGroups.find(g => g.id === groupId);
+                    break;
+                }
+                // 恢复整组（旧版这里被上面的 'Ba'/'Na'/'Ra' 分支提前吃掉，永远不执行）
+                case 'Na':
+                    await restoreGroup(message.args?.[0], message.args?.[1]);
+                    responseData = {};
+                    break;
+                // 组内移动 / 跨组移动
+                case 'Ra':
+                    await moveTab(message.args?.[0], message.args?.[0], message.args?.[1], message.args?.[2]);
+                    responseData = {};
+                    break;
+                case 'Ba':
+                    await moveTab(message.args?.[0], message.args?.[1], message.args?.[2], message.args?.[3]);
+                    responseData = {};
+                    break;
+                case 'ka': {
+                    const { groups, storageKey } = await readGroups();
+                    const group = groups.find((g) => g.id === message.args?.[0]);
                     if (group) {
-                        for (const tab of group.tabsMeta) {
-                            await chrome.tabs.create({ url: tab.url });
-                        }
+                        Object.assign(group, message.args?.[1] || {});
+                        await writeGroups(groups, storageKey);
                     }
                     responseData = {};
-                } else if (message.type === 'ka') {
-                    const groupId = message.args[0];
-                    const updates = message.args[1];
-                    const { tabGroups = [] } = await chrome.storage.local.get('tabGroups');
-                    const group = tabGroups.find(g => g.id === groupId);
+                    break;
+                }
+                case 'Fa': {
+                    const { groups, storageKey } = await readGroups();
+                    const group = groups.find((g) => g.id === message.args?.[0]);
                     if (group) {
-                        Object.assign(group, updates);
-                        await chrome.storage.local.set({ tabGroups });
+                        group.tabsMeta = group.tabsMeta.filter((t) => t.id !== message.args?.[1]);
+                        await writeGroups(
+                            groups.filter((g) => g.tabsMeta.length > 0),
+                            storageKey
+                        );
                     }
                     responseData = {};
-                } else if (message.type === 'Fa') {
-                    const groupId = message.args[0];
-                    const tabId = message.args[1];
-                    const { tabGroups = [] } = await chrome.storage.local.get('tabGroups');
-                    const group = tabGroups.find(g => g.id === groupId);
-                    if (group) {
-                        group.tabsMeta = group.tabsMeta.filter(t => t.id !== tabId);
-                        if (group.tabsMeta.length === 0) {
-                            const newGroups = tabGroups.filter(g => g.id !== groupId);
-                            await chrome.storage.local.set({ tabGroups: newGroups });
-                        } else {
-                            await chrome.storage.local.set({ tabGroups });
-                        }
-                    }
-                    responseData = {};
-                } else if (message.type === 'getSettings') {
+                    break;
+                }
+                case 'getSettings':
                     responseData = await chrome.storage.local.get(null);
-                } else if (message.type === 'se') {
+                    break;
+                case 'se': {
                     const settings = message.args?.[0];
-                    if (settings) {
-                        await chrome.storage.local.set(settings);
-                    }
+                    if (settings) await chrome.storage.local.set(settings);
                     responseData = {};
-                } else if (message.type === 'K') {
-                    const text = message.args[0] || "";
-                    const lines = text.split('\n');
+                    break;
+                }
+                case 'K': {
+                    const text = message.args?.[0] || '';
                     const tabsMeta = [];
-                    for (const line of lines) {
-                        const trimmedLine = line.trim();
-                        if (!trimmedLine) continue;
-                        const parts = trimmedLine.split(' | ');
+                    for (const line of text.split('\n')) {
+                        const trimmed = line.trim();
+                        if (!trimmed) continue;
+                        const parts = trimmed.split(' | ');
                         const url = parts[0].trim();
                         const title = parts.length > 1 ? parts[1].trim() : url;
-                        if (url) {
-                            tabsMeta.push({
-                                id: Math.random().toString(36).substring(2),
-                                url: url.startsWith('http') ? url : 'http://' + url,
-                                title: title
-                            });
-                        }
+                        if (!url) continue;
+                        tabsMeta.push({
+                            id: newId(),
+                            url: url.startsWith('http') ? url : 'http://' + url,
+                            title
+                        });
                     }
                     if (tabsMeta.length > 0) {
-                        const newGroup = {
-                            id: Math.random().toString(36).substring(2),
-                            createDate: Date.now(),
-                            tabsMeta: tabsMeta
-                        };
-                        await chrome.storage.local.set({ lastImportedGroup: newGroup });
+                        await chrome.storage.local.set({
+                            lastImportedGroup: { id: newId(), createDate: Date.now(), tabsMeta }
+                        });
                     }
                     responseData = {};
-                } else if (message.type === 'Z') {
+                    break;
+                }
+                case 'Z': {
                     const { lastImportedGroup } = await chrome.storage.local.get('lastImportedGroup');
                     if (lastImportedGroup) {
-                        const localData = await chrome.storage.local.get(null);
-                        let tabGroups = localData.tabGroups;
-                        let targetKey = 'tabGroups';
-                        
-                        if (!tabGroups && localData.sessionStore?.tabGroups) {
-                            tabGroups = localData.sessionStore.tabGroups;
-                            targetKey = 'sessionStore.tabGroups';
-                        }
-                        
-                        tabGroups = tabGroups || [];
-                        tabGroups.unshift(lastImportedGroup);
-                        
-                        if (targetKey === 'sessionStore.tabGroups') {
-                            const sessionStore = localData.sessionStore || {};
-                            sessionStore.tabGroups = tabGroups;
-                            await chrome.storage.local.set({ sessionStore });
-                        } else {
-                            await chrome.storage.local.set({ tabGroups });
-                        }
-                        
+                        const { groups, storageKey } = await readGroups();
+                        groups.unshift(lastImportedGroup);
+                        await writeGroups(groups, storageKey);
                         await chrome.storage.local.remove('lastImportedGroup');
                     }
                     responseData = {};
-                } else {
-                    responseData = {};
+                    break;
                 }
-                
-                sendResponse({ result: responseData });
-            } catch (err) {
-                console.error("[Background] Error in message handler:", err);
-                sendResponse({ result: {}, error: err.message });
+                default:
+                    responseData = {};
             }
-        };
 
-        handleMessage();
-        return true;
-    }
+            sendResponse({ result: responseData });
+        } catch (err) {
+            console.error('[Background] Error in message handler:', err);
+            sendResponse({ result: {}, error: err.message });
+        }
+    })();
+
+    return true;
 });
+
+// ---------- 快捷键 ----------
 
 chrome.commands.onCommand.addListener((command) => {
     if (command === 'toggle-pin') {
-        chrome.tabs.query({
-            active: true,
-            currentWindow: true
-        }, (tabs) => {
+        chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
             const activeTab = tabs[0];
-
-            if (!activeTab || activeTab.id === undefined) {
-                return;
-            }
-
-            chrome.tabs.update(activeTab.id, {
-                pinned: !activeTab.pinned
-            }, (tab) => {
+            if (!activeTab || activeTab.id === undefined) return;
+            chrome.tabs.update(activeTab.id, { pinned: !activeTab.pinned }, () => {
                 if (chrome.runtime.lastError) {
-                    console.warn("Could not update tab. It may have been closed. Error: " + chrome.runtime.lastError.message);
+                    console.warn('Could not update tab: ' + chrome.runtime.lastError.message);
                 }
             });
         });
@@ -435,103 +465,3 @@ chrome.commands.onCommand.addListener((command) => {
         });
     }
 });
-
-const ge = !1,
-    Se = !1,
-    Me = !1,
-    Ge = !1,
-    Ie = !1,
-    We = !1,
-    Ae = !0,
-    ut = "edge://",
-    y = "edge://newtab/",
-    gt = "https://www.one-tab.com",
-    Oe = !1,
-    Pe = !1,
-    Ee = !1,
-    u = chrome.runtime.getURL("onetab.html"),
-    N = u.substring(0, u.length - "onetab.html".length);
-let ct = !0;
-async function Y() {
-    return ct ? (await chrome.permissions.getAll()).permissions.includes("tabGroups") && chrome.tabGroups : !1
-}
-async function St() {
-    if (!ct) return !1;
-    try {
-        return await chrome.permissions.request({
-            permissions: ["tabGroups"]
-        })
-    } catch (i) {
-        return console.log('chrome.permissions.request for "tabGroups" permission failed with error:'), console.log(i), !1
-    }
-}
-
-function Ce(i) {
-    let t = $(i);
-    return t.toLowerCase().startsWith("www.") ? t.substring("www.".length) : t
-}
-
-function $(i) {
-    return i ? (i.indexOf("//") === 0 && (i = "http:" + i), i.indexOf("://") === -1 && (i = "http://" + i), i = i.substring(i.indexOf("://") + "://".length), i.indexOf("/") !== -1 && (i = i.substring(0, i.indexOf("/"))), i.indexOf(":") !== -1 && (i = i.substring(0, i.indexOf(":"))), i.indexOf("?") !== -1 && (i = i.substring(0, i.indexOf("?"))), i.indexOf("#") !== -1 && (i = i.substring(0, i.indexOf("#"))), i.toLowerCase()) : "undefined"
-}
-
-function ke(i) {
-    return i.indexOf("://") === -1 ? "https://" : (i = i.substring(0, i.indexOf("://") + "://".length), i.toLowerCase())
-}
-let Mt = ["com", "co.uk", "org.uk", "net", "org", "de", "ru", "info", "xyz", "nl"];
-
-function Fe(i) {
-    let t = $(i);
-    try {
-        for (let e in Mt) {
-            let a = "." + Mt[e];
-            if (Kt(t, a)) {
-                for (t = t.substring(0, t.length - a.length); t.indexOf(".") !== -1;) t = t.substring(t.indexOf(".") + 1);
-                t = t + a;
-                break
-            }
-        }
-        return t.indexOf("www.") === 0 && (t = t.substring("www.".length)), t
-    } catch {
-        return t
-    }
-}
-
-function Ut(i) {
-    i.noCacheRandom = Nt()
-}
-
-function Nt() {
-    return new Date().getTime() + Math.round(Math.random() * 1e4) + ""
-}
-async function $t(i, t) {
-    Ut(t);
-    let e = JSON.stringify(t);
-    return await (await jt(i, e)).json()
-}
-async function jt(i, t) {
-    let e = {};
-    t ? (e.method = "POST", e.body = t) : e.method = "GET", e.headers = new Headers, e.headers.append("Content-Type", "text/json");
-    let a = await fetch(i, e);
-    if (a.status === 200) return a;
-    throw new Error("http response code" + a.status)
-}
-
-async function handleTab(tab) {
-    const url = tab.url;
-    if (shouldBlock(url)) {
-        await popFirstTabAndRedirect(tab.id);
-    }
-}
-
-chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
-    if (changeInfo.url) {
-        handleTab(tab);
-    }
-});
-
-function shouldBlock(url) {
-    const blockedDomains = ["example.com", "test.com"];
-    const domain = new URL(url).hostname;
-    return blockedDomains.some(blockedDomain => domain.includes(blockedDomain));
-}

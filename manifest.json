@@ -1,15 +1,13 @@
 {
   "manifest_version": 3,
   "name": "HJX Extension",
-  "version": "2.10",
+  "version": "2.11",
   "description": "Block or filter specific content on ACG-related websites.",
+  "minimum_chrome_version": "111",
   "permissions": [
     "storage",
     "tabs",
-    "favicon",
     "unlimitedStorage",
-    "activeTab",
-    "scripting",
     "contextMenus"
   ],
   "host_permissions": [
@@ -17,8 +15,6 @@
     "https://*.xiaohongshu.com/*",
     "https://*.wnacg.com/*",
     "https://jmcomic-zzz.one/*",
-    "https://*.aaccnn.com/*",
-    "https://8xbook.cc/*",
     "https://chunman4.com/*",
     "https://gemini.google.com/*",
     "https://chatgpt.com/*",
@@ -41,18 +37,18 @@
       "description": "Toggle pin/unpin active tab"
     },
     "display-onetab": {
-       "description": "__MSG_displayOneTab__",
-       "suggested_key": {
-          "default": "Alt+Shift+1"
-       }
+      "description": "__MSG_displayOneTab__",
+      "suggested_key": {
+        "default": "Alt+Shift+1"
+      }
     },
     "send-current-tab-to-onetab": {
-       "description": "__MSG_sendCurrentTabToOneTab__"
+      "description": "__MSG_sendCurrentTabToOneTab__"
     }
   },
   "options_ui": {
-     "open_in_tab": true,
-     "page": "options.html"
+    "open_in_tab": true,
+    "page": "options.html"
   },
   "action": {
     "default_popup": "popup.html",
@@ -70,33 +66,25 @@
         "https://*.xiaohongshu.com/*",
         "https://*.wnacg.com/*",
         "https://jmcomic-zzz.one/*",
-        "https://*.aaccnn.com/*",
-        "https://8xbook.cc/*",
-        "https://chunman4.com/*",
-        "https://gemini.google.com/*"
+        "https://chunman4.com/*"
       ],
-      "js": ["content.js"],
+      "js": ["config.js", "content.js"],
       "run_at": "document_end"
     },
     {
-      "matches": ["https://gemini.google.com/*"],
-      "js": ["content_script_gemini.js"],
-      "run_at": "document_end"
-    },
-    {
-      "matches": ["https://chatgpt.com/*"],
-      "js": ["content_script_chatgpt.js"],
-      "run_at": "document_end"
-    },
-    {
-      "matches": ["https://claude.ai/*"],
-      "js": ["content_script_claude.js"],
+      "matches": [
+        "https://gemini.google.com/*",
+        "https://chatgpt.com/*",
+        "https://claude.ai/*"
+      ],
+      "js": ["config.js", "ai_shortcuts.js"],
       "run_at": "document_end"
     },
     {
       "matches": ["https://missav123.com/*", "https://missav.live/*"],
-      "js": ["content_script_missav.js"],
-      "run_at": "document_start"
+      "js": ["missav_main.js"],
+      "run_at": "document_start",
+      "world": "MAIN"
     },
     {
       "matches": ["https://missav123.com/*", "https://missav.live/*"],
