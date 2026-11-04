@@ -1,9 +1,18 @@
 // OneTab 后端 + ACG 拦截后端
 // 版本号唯一来源是 manifest.json（options.html 与 OneTab 前端也都改成读它）
+importScripts('auto_mute.js');
+
 const wt = chrome.runtime.getManifest().version;
 
-chrome.runtime.onInstalled.addListener(() => {
+chrome.runtime.onInstalled.addListener(async () => {
     createContextMenu();
+
+    // 自动静音的默认配置只在键缺失时写入，避免覆盖用户已经删空的域名列表
+    const data = await chrome.storage.local.get(['autoMuteEnabled', 'autoMuteDomains']);
+    const patch = {};
+    if (typeof data.autoMuteEnabled !== 'boolean') patch.autoMuteEnabled = true;
+    if (!Array.isArray(data.autoMuteDomains)) patch.autoMuteDomains = ['threads.com'];
+    if (Object.keys(patch).length > 0) await chrome.storage.local.set(patch);
 });
 
 // ---------- 分组存储：兼容 tabGroups / sessionStore.tabGroups 两套键 ----------
@@ -465,3 +474,6 @@ chrome.commands.onCommand.addListener((command) => {
         });
     }
 });
+
+// 域名自动静音：注册监听 + 启动/SW 重启时按当前配置对齐所有标签
+HJX_AUTO_MUTE.init();

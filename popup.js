@@ -8,9 +8,14 @@ const els = {
   accessBlock: document.getElementById('access-block'),
   contentFilter: document.getElementById('content-filter'),
   aiShortcuts: document.getElementById('ai-shortcuts'),
+  autoMute: document.getElementById('auto-mute'),
   keywordInput: document.getElementById('keyword-input'),
   addKeyword: document.getElementById('add-keyword'),
   keywordList: document.getElementById('keyword-list'),
+  domainInput: document.getElementById('domain-input'),
+  addDomain: document.getElementById('add-domain'),
+  domainList: document.getElementById('domain-list'),
+  domainError: document.getElementById('domain-error'),
   unblock15: document.getElementById('unblock-15'),
   unblockCancel: document.getElementById('unblock-cancel'),
   unblockStatus: document.getElementById('unblock-status'),
@@ -18,12 +23,15 @@ const els = {
 };
 
 let keywords = [];
+let domains = [];
 
 function readState() {
   return storage.get({
     extensionEnabled: true,
     contentFilterEnabled: true,
     aiShortcutsEnabled: true,
+    autoMuteEnabled: true,
+    autoMuteDomains: ['threads.com'],
     aiDisabledSites: [],
     blockedKeywords: [],
     unblockUntil: 0
@@ -64,10 +72,37 @@ function renderKeywords() {
   }
 }
 
+function renderDomains() {
+  els.domainList.textContent = '';
+  if (domains.length === 0) {
+    const empty = document.createElement('li');
+    empty.className = 'empty';
+    empty.textContent = '未配置域名（自动静音不会生效）';
+    els.domainList.appendChild(empty);
+    return;
+  }
+
+  for (const domain of domains) {
+    const li = document.createElement('li');
+    const span = document.createElement('span');
+    span.textContent = domain;
+
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.textContent = '×';
+    remove.title = '删除';
+    remove.dataset.domain = domain;
+
+    li.append(span, remove);
+    els.domainList.appendChild(li);
+  }
+}
+
 function render(state) {
   els.accessBlock.checked = state.extensionEnabled !== false;
   els.contentFilter.checked = state.contentFilterEnabled !== false;
   els.aiShortcuts.checked = state.aiShortcutsEnabled !== false;
+  els.autoMute.checked = state.autoMuteEnabled !== false;
 
   const disabledSites = Array.isArray(state.aiDisabledSites) ? state.aiDisabledSites : [];
   document.querySelectorAll('[data-site]').forEach((input) => {
@@ -76,6 +111,11 @@ function render(state) {
 
   keywords = Array.isArray(state.blockedKeywords) ? state.blockedKeywords.slice() : [];
   renderKeywords();
+
+  const fallbackDomains = globalThis.HJX_AUTO_MUTE?.DEFAULT_DOMAINS || ['threads.com'];
+  domains = (Array.isArray(state.autoMuteDomains) ? state.autoMuteDomains : fallbackDomains).slice();
+  renderDomains();
+
   renderUnblock(Number(state.unblockUntil) || 0);
 }
 
@@ -95,6 +135,33 @@ function addKeyword() {
   els.keywordInput.focus();
 }
 
+async function saveDomains(next) {
+  domains = next;
+  renderDomains();
+  await storage.set({ autoMuteDomains: next });
+}
+
+function addDomain() {
+  const raw = els.domainInput.value.trim();
+  if (!raw) return;
+
+  const normalize = globalThis.HJX_AUTO_MUTE?.normalizeDomain;
+  const normalized = normalize ? normalize(raw) : raw.toLowerCase();
+  if (!normalized) {
+    els.domainError.textContent = '看起来不是一个域名，例如 threads.com';
+    return;
+  }
+  if (domains.includes(normalized)) {
+    els.domainError.textContent = '这个域名已经在列表里';
+    return;
+  }
+
+  els.domainError.textContent = '';
+  els.domainInput.value = '';
+  saveDomains([...domains, normalized]);
+  els.domainInput.focus();
+}
+
 function bindSiteToggles() {
   document.querySelectorAll('[data-site]').forEach((input) => {
     input.addEventListener('change', async () => {
@@ -111,6 +178,7 @@ function bindEvents() {
   els.accessBlock.addEventListener('change', () => storage.set({ extensionEnabled: els.accessBlock.checked }));
   els.contentFilter.addEventListener('change', () => storage.set({ contentFilterEnabled: els.contentFilter.checked }));
   els.aiShortcuts.addEventListener('change', () => storage.set({ aiShortcutsEnabled: els.aiShortcuts.checked }));
+  els.autoMute.addEventListener('change', () => storage.set({ autoMuteEnabled: els.autoMute.checked }));
 
   els.addKeyword.addEventListener('click', addKeyword);
   els.keywordInput.addEventListener('keydown', (event) => {
@@ -124,6 +192,22 @@ function bindEvents() {
     const btn = event.target.closest('button[data-keyword]');
     if (!btn) return;
     saveKeywords(keywords.filter((kw) => kw !== btn.dataset.keyword));
+  });
+
+  els.addDomain.addEventListener('click', addDomain);
+  els.domainInput.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      addDomain();
+    }
+  });
+  els.domainInput.addEventListener('input', () => {
+    els.domainError.textContent = '';
+  });
+  els.domainList.addEventListener('click', (event) => {
+    const btn = event.target.closest('button[data-domain]');
+    if (!btn) return;
+    saveDomains(domains.filter((domain) => domain !== btn.dataset.domain));
   });
 
   els.unblock15.addEventListener('click', async () => {

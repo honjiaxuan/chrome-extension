@@ -65,14 +65,14 @@
             border: 1px solid #ccc;
             border-radius: 4px;
         }
-        ul#keyword-list {
+        ul.list {
             list-style: none;
             margin: 4px 0 0;
             padding: 0;
             max-height: 132px;
             overflow-y: auto;
         }
-        ul#keyword-list li {
+        ul.list li {
             display: flex;
             align-items: center;
             justify-content: space-between;
@@ -80,8 +80,8 @@
             padding: 3px 0;
             border-bottom: 1px solid #f0f0f0;
         }
-        ul#keyword-list li span { overflow-wrap: anywhere; }
-        ul#keyword-list li button {
+        ul.list li span { overflow-wrap: anywhere; }
+        ul.list li button {
             border: none;
             background: none;
             color: #999;
@@ -89,8 +89,9 @@
             line-height: 1;
             padding: 2px 4px;
         }
-        ul#keyword-list li button:hover { color: #c00; background: none; }
+        ul.list li button:hover { color: #c00; background: none; }
         .empty { color: #aaa; font-size: 12px; padding: 4px 0; }
+        .error { color: #c00; font-size: 11px; min-height: 14px; margin-top: 4px; }
         #unblock-status { font-size: 11px; color: #777; }
     </style>
 </head>
@@ -123,7 +124,21 @@
             <input type="text" id="keyword-input" placeholder="新增屏蔽关键词">
             <button id="add-keyword">添加</button>
         </div>
-        <ul id="keyword-list"></ul>
+        <ul id="keyword-list" class="list"></ul>
+    </div>
+
+    <div class="section">
+        <div class="row">
+            <label for="auto-mute">自动静音网站</label>
+            <input type="checkbox" id="auto-mute" checked>
+        </div>
+        <p class="hint">打开这些域名（含子域名）的标签会自动静音。手动取消静音后，该标签本次停留在这个站点期间不会再被静音；换站或关掉标签后规则重新生效。</p>
+        <div class="kw-add">
+            <input type="text" id="domain-input" placeholder="例如 threads.com">
+            <button id="add-domain">添加</button>
+        </div>
+        <div id="domain-error" class="error"></div>
+        <ul id="domain-list" class="list"></ul>
     </div>
 
     <div class="section">
@@ -146,6 +161,7 @@
         </div>
     </div>
 
+    <script src="auto_mute.js"></script>
     <script src="popup.js"></script>
 </body>
 </html>

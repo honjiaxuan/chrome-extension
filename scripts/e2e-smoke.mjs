@@ -6,7 +6,7 @@
 // 用 channel:'chromium' 的新 headless 模式，扩展才真的会被加载
 // （默认 headless shell 不支持扩展）。
 import { createRequire } from 'node:module';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -85,6 +85,19 @@ async function inject(page, ...files) {
   }
 }
 
+// 给“带扩展”的上下文用：只返回主文档，其它请求 abort，但保留真实 chrome API
+async function newRoutedPage(context, url, html = '<!doctype html><html><body>page</body></html>') {
+  const page = await context.newPage();
+  await page.route('**/*', (route) => {
+    if (route.request().resourceType() === 'document') {
+      return route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: html });
+    }
+    return route.abort();
+  });
+  await page.goto(url, { waitUntil: 'domcontentloaded' });
+  return page;
+}
+
 const wnacgHtml = `<!doctype html><html><body>
   <ul id="list">
     <li class="li gallary_item" id="cat"><div class="pic_box cate-12"></div><div class="title"><a href="#">单行本分类</a></div></li>
@@ -140,7 +153,8 @@ const zhihuHtml = '<!doctype html><html><body><h1>zhihu</h1></body></html>';
   // ---------- 1. manifest / 后台基础 ----------
   console.log('\n[1] 扩展与后台');
   const manifestVersion = await sw.evaluate(() => chrome.runtime.getManifest().version);
-  check('manifest 版本是 2.11', manifestVersion === '2.11', 'got ' + manifestVersion);
+  const packageVersion = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).version.replace(/\.0$/, '');
+  check('manifest 版本与 package.json 一致', manifestVersion === packageVersion, `manifest ${manifestVersion} / package ${packageVersion}`);
 
   const popup = await context.newPage();
   await popup.goto(`chrome-extension://${extensionId}/popup.html`);
@@ -184,7 +198,7 @@ const zhihuHtml = '<!doctype html><html><body><h1>zhihu</h1></body></html>';
   // ---------- 2. popup UI ----------
   console.log('\n[2] popup');
   check('版本号渲染', (await popup.textContent('#version')) === 'v' + manifestVersion);
-  check('三个开关都存在', (await popup.locator('input[type=checkbox]').count()) === 6, '含三个站点子开关');
+  check('三个开关 + 自动静音 + 三个站点子开关', (await popup.locator('input[type=checkbox]').count()) === 7, '共 7 个复选框');
 
   await popup.fill('#keyword-input', '测试关键词');
   await popup.click('#add-keyword');
@@ -213,6 +227,35 @@ const zhihuHtml = '<!doctype html><html><body><h1>zhihu</h1></body></html>';
   );
   await popup.check('#content-filter');
   await popup.waitForTimeout(100);
+
+  // 自动静音的域名管理
+  await popup.fill('#domain-input', 'https://www.instagram.com/some/path');
+  await popup.click('#add-domain');
+  check(
+    '域名归一化后写入 storage',
+    await waitFor(async () => {
+      const data = await popup.evaluate(() => chrome.storage.local.get('autoMuteDomains'));
+      return Array.isArray(data.autoMuteDomains) && data.autoMuteDomains.includes('instagram.com');
+    })
+  );
+  check('归一化后的域名出现在列表', (await popup.textContent('#domain-list')).includes('instagram.com'));
+
+  await popup.fill('#domain-input', 'not a domain');
+  await popup.click('#add-domain');
+  check('非法域名给出提示', (await popup.textContent('#domain-error')).trim().length > 0);
+
+  await popup.fill('#domain-input', 'instagram.com');
+  await popup.click('#add-domain');
+  check('重复域名被拒绝', (await popup.textContent('#domain-error')).includes('已经'));
+
+  await popup.click('#domain-list button[data-domain="instagram.com"]');
+  check(
+    '域名可以从列表删除',
+    await waitFor(async () => {
+      const data = await popup.evaluate(() => chrome.storage.local.get('autoMuteDomains'));
+      return Array.isArray(data.autoMuteDomains) && !data.autoMuteDomains.includes('instagram.com');
+    })
+  );
 
   // ---------- 3. 后台消息路由（Na 死分支修复 / Ba 移动 / Da 删除） ----------
   console.log('\n[3] 后台消息路由');
@@ -376,6 +419,153 @@ const zhihuHtml = '<!doctype html><html><body><h1>zhihu</h1></body></html>';
   await ai.keyboard.press('Enter');
   check('单站关闭后 Enter 不再被拦截', (await ai.evaluate(() => window.__sent)) === 1);
   await ai.close();
+
+  // ---------- 7. 域名自动静音（真实 chrome.tabs 静音状态） ----------
+  console.log('\n[7] 域名自动静音');
+
+  const tabInfoById = (tabId) =>
+    popup.evaluate(async (id) => {
+      try {
+        const t = await chrome.tabs.get(id);
+        return {
+          id: t.id,
+          url: t.url,
+          muted: t.mutedInfo.muted,
+          reason: t.mutedInfo.reason,
+          extensionId: t.mutedInfo.extensionId
+        };
+      } catch (e) {
+        return null;
+      }
+    }, tabId);
+
+  const tabInfoByPrefix = (prefix) =>
+    popup.evaluate(async (p) => {
+      const tabs = await chrome.tabs.query({});
+      const t = tabs.find((x) => (x.url || '').startsWith(p));
+      return t
+        ? {
+            id: t.id,
+            url: t.url,
+            muted: t.mutedInfo.muted,
+            reason: t.mutedInfo.reason,
+            extensionId: t.mutedInfo.extensionId
+          }
+        : null;
+    }, prefix);
+
+  // waitFor 只返回 true/false，这里等条件成立后再取一次真实状态
+  const waitForMuted = async (getInfo, expected, timeout = 8000) => {
+    await waitFor(async () => {
+      const info = await getInfo();
+      return !!info && info.muted === expected;
+    }, timeout);
+    return getInfo();
+  };
+
+  const sessionState = () =>
+    popup
+      .evaluate(async () => (await chrome.storage.session.get('autoMuteTabState')).autoMuteTabState || {})
+      .catch(() => ({}));
+
+  await popup.evaluate(() =>
+    chrome.storage.local.set({ autoMuteEnabled: true, autoMuteDomains: ['threads.com'] })
+  );
+
+  const threadsUrl = 'https://www.threads.com/@fatimabuildsai/post/DfR16SUDDbA?xmt=123';
+  const threadsPage = await newRoutedPage(context, threadsUrl);
+  const threadsTab = await waitForMuted(() => tabInfoByPrefix('https://www.threads.com/@fatimabuildsai'), true);
+  check('打开 Threads 帖子（带查询参数）自动静音', threadsTab?.muted === true, JSON.stringify(threadsTab));
+  check(
+    '静音来源是我们的扩展',
+    threadsTab?.reason === 'extension' && threadsTab?.extensionId === extensionId,
+    JSON.stringify(threadsTab)
+  );
+  const threadsTabId = threadsTab?.id ?? -1;
+
+  const threadsPage2 = await newRoutedPage(context, 'https://sub.threads.com/@another');
+  const threadsTab2 = await waitForMuted(() => tabInfoByPrefix('https://sub.threads.com/'), true);
+  check('子域名标签同样自动静音', threadsTab2?.muted === true, JSON.stringify(threadsTab2));
+  check('两个标签各自独立记录', !!threadsTab && !!threadsTab2 && threadsTab.id !== threadsTab2.id);
+
+  // 离开域名要还原（只还原我们自己造成的静音）
+  await threadsPage.goto('https://example.com/', { waitUntil: 'domcontentloaded' }).catch(() => {});
+  const leftTab = await waitForMuted(() => tabInfoById(threadsTabId), false);
+  check('离开 Threads 后还原为未静音', leftTab?.muted === false, JSON.stringify(leftTab));
+
+  await threadsPage.goto(threadsUrl, { waitUntil: 'domcontentloaded' }).catch(() => {});
+  const backTab = await waitForMuted(() => tabInfoById(threadsTabId), true);
+  check('回到 Threads 重新自动静音', backTab?.muted === true, JSON.stringify(backTab));
+
+  // 关闭一个标签要清理状态
+  const closedId = threadsTab2?.id ?? -1;
+  await threadsPage2.close();
+  check(
+    '关闭标签后清理 session 状态',
+    await waitFor(async () => !(await sessionState())[closedId], 5000)
+  );
+
+  // 关闭功能
+  await popup.evaluate(() => chrome.storage.local.set({ autoMuteEnabled: false }));
+  const disabledTab = await waitForMuted(() => tabInfoById(threadsTabId), false);
+  check('关闭自动静音后现有标签被还原', disabledTab?.muted === false, JSON.stringify(disabledTab));
+
+  const threadsOffPage = await newRoutedPage(context, 'https://www.threads.com/@off');
+  await sleep(1500);
+  const offInfo = await tabInfoByPrefix('https://www.threads.com/@off');
+  check('关闭状态下新开的 Threads 不被静音', offInfo?.muted === false, JSON.stringify(offInfo));
+
+  // 重新开启 + 域名增删
+  await popup.evaluate(() =>
+    chrome.storage.local.set({ autoMuteEnabled: true, autoMuteDomains: ['threads.com', 'example.org'] })
+  );
+  const reEnabled = await waitForMuted(() => tabInfoById(threadsTabId), true);
+  check('重新开启后已有标签恢复静音', reEnabled?.muted === true, JSON.stringify(reEnabled));
+
+  const exampleOrgPage = await newRoutedPage(context, 'https://example.org/hello');
+  const exampleOrgInfo = await waitForMuted(() => tabInfoByPrefix('https://example.org/hello'), true);
+  check('新增域名后该站点自动静音', exampleOrgInfo?.muted === true, JSON.stringify(exampleOrgInfo));
+
+  await popup.evaluate(() => chrome.storage.local.set({ autoMuteDomains: ['threads.com'] }));
+  const removedDomainTab = await waitForMuted(() => tabInfoByPrefix('https://example.org/hello'), false);
+  check('移除域名后不再静音并还原', removedDomainTab?.muted === false, JSON.stringify(removedDomainTab));
+
+  const falsePositivePage = await newRoutedPage(context, 'https://notthreads.com/');
+  await sleep(1500);
+  const falsePositive = await tabInfoByPrefix('https://notthreads.com/');
+  check('notthreads.com 不被误静音', falsePositive?.muted === false, JSON.stringify(falsePositive));
+
+  await falsePositivePage.close();
+  await exampleOrgPage.close();
+  await threadsOffPage.close();
+
+  // 扩展 / service worker 重启后重新对齐
+  await popup.evaluate(() =>
+    chrome.storage.local.set({ autoMuteEnabled: true, autoMuteDomains: ['threads.com'] })
+  );
+  await waitForMuted(() => tabInfoById(threadsTabId), true);
+  await popup.evaluate(async (id) => {
+    await chrome.tabs.update(id, { muted: false });
+  }, threadsTabId);
+  const clearedTab = await waitForMuted(() => tabInfoById(threadsTabId), false);
+  check('手动改回未静音（构造重启场景）', clearedTab?.muted === false, JSON.stringify(clearedTab));
+
+  // 真正把 service worker 停掉再唤醒，验证“SW 重启后重新对齐”
+  const cdp = await context.newCDPSession(popup);
+  await cdp.send('ServiceWorker.enable');
+  await cdp.send('ServiceWorker.stopAllWorkers');
+  await sleep(600);
+  await popup.evaluate(() => chrome.runtime.sendMessage({ type: 'corePing' })).catch(() => {});
+  const restartedTab = await waitForMuted(() => tabInfoById(threadsTabId), true, 15000);
+  check('service worker 重启后已有 Threads 标签重新被静音', restartedTab?.muted === true, JSON.stringify(restartedTab));
+
+  // 状态仍在 session storage 里（重启不该丢）
+  const stateAfterRestart = await sessionState();
+  check(
+    '重启后 session 里仍有该标签的状态',
+    !!stateAfterRestart[threadsTabId],
+    JSON.stringify(stateAfterRestart)
+  );
 
   await context.close();
   await plainBrowser.close();
