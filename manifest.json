@@ -15,6 +15,8 @@
     "https://*.xiaohongshu.com/*",
     "https://*.wnacg.com/*",
     "https://jmcomic-zzz.one/*",
+    "https://*.aaccnn.com/*",
+    "https://8xbook.cc/*",
     "https://chunman4.com/*",
     "https://gemini.google.com/*",
     "https://chatgpt.com/*",
@@ -66,6 +68,8 @@
         "https://*.xiaohongshu.com/*",
         "https://*.wnacg.com/*",
         "https://jmcomic-zzz.one/*",
+        "https://*.aaccnn.com/*",
+        "https://8xbook.cc/*",
         "https://chunman4.com/*"
       ],
       "js": ["config.js", "content.js"],

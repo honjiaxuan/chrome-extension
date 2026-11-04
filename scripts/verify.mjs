@@ -109,6 +109,7 @@ try {
 if (config) {
   const hosts = new Set([
     ...(config.accessBlocks || []).flatMap((b) => b.hosts),
+    ...(config.registered?.hosts || []),
     ...(config.chunman?.hosts || []),
     ...(config.redirects || []).flatMap((r) => r.hosts),
     ...(config.missav?.hosts || []),

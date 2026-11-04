@@ -44,6 +44,14 @@ globalThis.HJX_CONFIG = {
     ]
   },
 
+  // 已登记、但暂时没有站点专属规则的域名。
+  // manifest 里会给它们挂上 content.js，脚本在这些站点会立刻 return（不读存储、不挂观察者），
+  // 保留只是为了以后加规则；真要监控时，按下面 wnacg / chunman 的形式补一条。
+  registered: {
+    hosts: ['aaccnn.com', '8xbook.cc'],
+    note: '仅登记，暂无过滤规则'
+  },
+
   // chunman4 论坛：标题含这些词的主题帖整行隐藏
   chunman: {
     hosts: ['chunman4.com'],

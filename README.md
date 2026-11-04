@@ -64,6 +64,8 @@ NODE_PATH=/home/hjx/node_modules node scripts/e2e-smoke.mjs
   失效时的表现是“不再隐藏/不再发送”，不会报错到界面上，用 `npm run test:e2e` 的桩页面回归最省事。
 - 自动静音默认只配 `threads.com`。如果实际访问被跳到 `threads.net`，在 popup 里加一行即可
   （同一标签跨域名跳转会先把状态清掉再按新域名重新判断）。
+- `aaccnn.com` / `8xbook.cc` 在 config.js 的 `registered` 里登记着，但没有站点专属规则：
+  `content.js` 会注入但立刻 return，等于不生效。要真监控需要先给出页面上要隐藏的元素/标题规则。
 - 用户手动取消静音只能靠 `mutedInfo.reason === 'user'` 识别，浏览器没有提供更可靠的“用户手势”信号；
   自动化测试无法合成这种事件，所以“刷新后仍保持未静音”必须真机验证。
 - OneTab bundle 内部还有一堆未接线的混淆残留（例如 `chrome.permissions` 请求 tabGroups），
