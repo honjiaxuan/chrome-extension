@@ -1,6 +1,6 @@
 # 冒烟清单（2.12）
 
-改动涉及后台路由、内容脚本、popup、自动静音状态机和 OneTab bundle，任何一项都可能静默失效
+改动涉及后台路由、内容脚本、设置页、自动静音状态机和 OneTab bundle，任何一项都可能静默失效
 （不报错、只是“不生效”），所以每次改完按下面顺序过一遍。
 
 ## 自动化
@@ -16,7 +16,7 @@ NODE_PATH=/home/hjx/node_modules node scripts/e2e-smoke.mjs # 真浏览器（50 
 - 扩展能以未打包形式加载、service worker 起来、manifest 版本与 package.json 一致
 - `corePing` 与 manifest 版本一致（OneTab bundle 版本补丁没打歪）
 - OneTab 页能初始化、options 页版本号来自 manifest
-- popup：版本渲染、关键词增删、内容过滤开关、自动静音域名增删（归一化 / 拒绝重复 / 非法输入）
+- 设置页：整页四卡片、版本渲染、关键词增删、内容过滤开关、自动静音域名增删（归一化 / 拒绝重复 / 非法输入）
 - 后台：`Na` 恢复整组真的开标签、`Ba` 跨组移动并清理空组、`Da` 删除分组
 - 内容脚本：wnacg 分类/关键词隐藏、标题清洗、临时解锁后还原、关掉过滤后不动页面
 - 内容脚本：知乎首页带查询参数仍被拦截、问答页不拦截、SPA pushState 到首页 1 秒内被拦截
@@ -42,23 +42,34 @@ NODE_PATH=/home/hjx/node_modules node scripts/e2e-smoke.mjs # 真浏览器（50 
 9. 小红书 `https://www.xiaohongshu.com/explore` 同上。
 10. wnacg 列表页：同人誌/单行本/杂志分类不显示；加一个关键词 → 该关键词条目隐藏（无需刷新）；
     标题里的 `[汉化]`、`(COMIC BAVEL)` 被去掉。
-11. popup 点“临时解锁 15 分钟” → 已隐藏的条目立刻出现、标题还原成原文；15 分钟后自动恢复隐藏。
-12. popup 关掉“内容过滤” → 所有隐藏恢复；关掉“访问拦截” → 知乎首页不再被顶替。
+11. 设置页点“临时解锁 15 分钟” → 已隐藏的条目立刻出现、标题还原成原文；15 分钟后自动恢复隐藏。
+12. 设置页关掉“内容过滤” → 所有隐藏恢复；关掉“访问拦截” → 知乎首页不再被顶替。
 13. ChatGPT / Gemini / Claude：Enter 发送、Shift+Enter 换行、中文输入法选词按 Enter 不发送。
-    在 popup 里关掉某一站 → 该站恢复原生行为。
+    在设置页里关掉某一站 → 该站恢复原生行为。
 14. missav：播放中切到别的标签，回来视频仍在播；标题不截断；右下角广告浮层消失。
 15. 打开任意 Threads 页面 → 标签立刻静音。**手动点一下取消静音**，然后同站内点开另一条帖子、
     再刷新页面 → 仍然保持未静音（自动化合成不了 `reason:'user'`，这条必须真机验证）。
 16. 再开一个新的 Threads 标签 → 新标签是静音的（旧的未静音标签不受影响）。
 17. 在 Threads 标签里导航到别的站点 → 恢复为未静音；返回 Threads → 重新静音。
-18. popup 关闭“自动静音网站” → 现有 Threads 标签取消静音；重新打开 → 恢复静音。
+18. 设置页关闭“自动静音网站” → 现有 Threads 标签取消静音；重新打开 → 恢复静音。
     在域名列表里加 `example.org` → 打开该站点被静音；删掉 → 取消静音。
 19. 浏览器完全退出再启动、恢复上次会话 → Threads 标签仍然是静音的。
 20. 用户自己原本就静音的标签（右键“静音标签页”）：进入/离开配置域名都不会被扩展改回未静音。
+21. 点工具栏的 HJX Extension 图标 → 在新标签打开整页设置（四个卡片、宽屏两列）；再点一次 →
+    聚焦已打开的那个设置标签，不会开第二个。
+
+## 2.13 变更摘要
+
+- 工具栏图标不再弹 320px 的 popup：`action.default_popup` 移除，改由 background 的
+  `chrome.action.onClicked` 在新标签打开 `settings.html`；已打开时聚焦原标签，不重复开。
+- `popup.html/js` 更名为 `settings.html/js`，布局从 320px 单列改成整页响应式卡片（宽屏两列），
+  所有控件 id 与存储键保持不变。
+- 版本：manifest / package.json 升到 2.13。
+- 测试：e2e 加了两项（manifest 无 default_popup、设置页四个卡片），共 52 项。
 
 ## 2.12 变更摘要
 
-- 新增：`auto_mute.js` 域名自动静音状态机 + popup “自动静音网站”区块（开关、域名列表、增删）。
+- 新增：`auto_mute.js` 域名自动静音状态机 + 设置页“自动静音网站”区块（开关、域名列表、增删）。
 - 修复：popup 的 `storage.get(默认值对象)` 只返回对象里列出的键，导致新增域名后列表不刷新
   （把 `autoMuteEnabled` / `autoMuteDomains` 加进默认值）。
 - 版本：manifest / package.json 升到 2.12；OneTab bundle 仍从 manifest 读版本。

@@ -88,7 +88,7 @@ const versionedFiles = [
   'ext-onetab-concatenated-sources-onetab.js',
   'ext-onetab-concatenated-sources-options.js',
   'options.html',
-  'popup.html'
+  'settings.html'
 ];
 for (const file of versionedFiles) {
   if (read(file).includes(version)) fail(file + ' 里还有硬编码版本号 ' + version);
@@ -136,7 +136,7 @@ for (const perm of declared) {
 }
 
 console.log('\n[8] 危险写法');
-if (/\.innerHTML\s*=/.test(read('popup.js'))) warn('popup.js 用了 innerHTML');
+if (/\.innerHTML\s*=/.test(read('settings.js'))) warn('settings.js 用了 innerHTML');
 for (const file of ['content.js', 'ai_shortcuts.js', 'missav_main.js', 'background.js', 'auto_mute.js']) {
   const src = read(file);
   if (/\beval\s*\(/.test(src)) fail(file + ' 用了 eval');

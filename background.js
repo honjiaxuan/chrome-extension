@@ -163,6 +163,22 @@ async function displayOneTab() {
     }
 }
 
+// 工具栏图标：没有 default_popup，点一下就在标签页里打开整页设置（已开则聚焦）
+async function openSettingsPage() {
+    const settingsUrl = chrome.runtime.getURL('settings.html');
+    const tabs = await chrome.tabs.query({ url: settingsUrl });
+    if (tabs.length > 0) {
+        chrome.tabs.update(tabs[0].id, { active: true });
+        chrome.windows.update(tabs[0].windowId, { focused: true });
+        return;
+    }
+    chrome.tabs.create({ url: settingsUrl });
+}
+
+chrome.action.onClicked.addListener(() => {
+    openSettingsPage();
+});
+
 async function sendTabsToOneTab(tabs, force = false) {
     const onetabUrl = chrome.runtime.getURL('onetab.html');
     const settings = await chrome.storage.local.get(['optionPinnedTabsAllow', 'excludedUrls', 'excludedDomains']);

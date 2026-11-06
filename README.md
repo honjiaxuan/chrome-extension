@@ -22,7 +22,7 @@
 | `ai_shortcuts.js` | 三个 AI 站的键盘行为（共用一份） |
 | `missav_main.js` | MAIN world 内容脚本，伪装可见性 |
 | `css_injector.js` | missav 样式覆盖 |
-| `popup.html/js` | 开关、临时解锁、关键词管理 |
+| `settings.html/js` | 整页设置（点工具栏图标在新标签打开）：开关、临时解锁、关键词、自动静音域名 |
 | `onetab.html` / `options.html` / `import-export.html` / `placeholder.html` | OneTab 页面 |
 | `ext-onetab-*.js` | OneTab 2.10 解包 bundle（已把版本常量改成读 manifest） |
 
@@ -52,7 +52,7 @@ NODE_PATH=/home/hjx/node_modules node scripts/e2e-smoke.mjs
   `options.html` 也由 `version_label.js` 渲染。`scripts/verify.mjs` 会拦下残留的硬编码版本号。
 - **加站点/改选择器**：先改 `config.js`，再同步 `manifest.json` 的 `matches`，最后跑 `verify`。
 - **改 OneTab bundle**：它是解包压缩代码，只做最小字符串级修改并在这里记录。
-- **临时解锁**：`chrome.storage.local.unblockUntil`（毫秒时间戳）。popup 里的“临时解锁 15 分钟”写这个键，
+- **临时解锁**：`chrome.storage.local.unblockUntil`（毫秒时间戳）。设置页里的“临时解锁 15 分钟”写这个键，
   内容脚本通过 `storage.onChanged` 即时生效，不需要刷新页面。
 - **自动静音**：配置在 `chrome.storage.local.autoMuteEnabled` / `autoMuteDomains`；
   每个标签的归属与 override 记在 `chrome.storage.session.autoMuteTabState`（SW 重启不丢，关标签即清）。
@@ -62,7 +62,7 @@ NODE_PATH=/home/hjx/node_modules node scripts/e2e-smoke.mjs
 
 - wnacg / chunman 的 DOM 结构、AI 站的选择器都是硬编码的，站点改版会让规则失效；
   失效时的表现是“不再隐藏/不再发送”，不会报错到界面上，用 `npm run test:e2e` 的桩页面回归最省事。
-- 自动静音默认只配 `threads.com`。如果实际访问被跳到 `threads.net`，在 popup 里加一行即可
+- 自动静音默认只配 `threads.com`。如果实际访问被跳到 `threads.net`，在设置页里加一行即可
   （同一标签跨域名跳转会先把状态清掉再按新域名重新判断）。
 - `aaccnn.com` / `8xbook.cc` 在 config.js 的 `registered` 里登记着，但没有站点专属规则：
   `content.js` 会注入但立刻 return，等于不生效。要真监控需要先给出页面上要隐藏的元素/标题规则。

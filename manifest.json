@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "HJX Extension",
-  "version": "2.12",
+  "version": "2.13",
   "description": "Block or filter specific content on ACG-related websites.",
   "minimum_chrome_version": "111",
   "permissions": [
@@ -53,7 +53,6 @@
     "page": "options.html"
   },
   "action": {
-    "default_popup": "popup.html",
     "default_icon": {
       "16": "icons/icon16.png",
       "32": "icons/icon32.png",

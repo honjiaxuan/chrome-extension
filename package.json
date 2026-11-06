@@ -1,6 +1,6 @@
 {
   "name": "hjx-extension",
-  "version": "2.12.0",
+  "version": "2.13.0",
   "private": true,
   "description": "个人浏览器扩展：OneTab 标签聚合 + ACG 站点过滤 + AI 聊天快捷键",
   "scripts": {

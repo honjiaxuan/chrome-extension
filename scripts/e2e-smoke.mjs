@@ -1,4 +1,4 @@
-// 真浏览器冒烟测试：加载未打包扩展，验证后台路由、popup 与内容脚本
+// 真浏览器冒烟测试：加载未打包扩展，验证后台路由、设置页与内容脚本
 // 运行：
 //   NODE_PATH=/home/hjx/node_modules node scripts/e2e-smoke.mjs
 // 或先 `npm i -D playwright` 后 `node scripts/e2e-smoke.mjs`
@@ -156,11 +156,19 @@ const zhihuHtml = '<!doctype html><html><body><h1>zhihu</h1></body></html>';
   const packageVersion = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).version.replace(/\.0$/, '');
   check('manifest 版本与 package.json 一致', manifestVersion === packageVersion, `manifest ${manifestVersion} / package ${packageVersion}`);
 
-  const popup = await context.newPage();
-  await popup.goto(`chrome-extension://${extensionId}/popup.html`);
-  await popup.waitForSelector('#keyword-list');
+  const manifestJson = JSON.parse(readFileSync(join(root, 'manifest.json'), 'utf8'));
+  check(
+    '工具栏图标不再弹 popup，改为打开整页设置',
+    !manifestJson.action?.default_popup && !!manifestJson.action?.default_icon,
+    JSON.stringify(manifestJson.action)
+  );
 
-  const pong = await popup.evaluate(() => chrome.runtime.sendMessage({ type: 'corePing' }));
+  const settings = await context.newPage();
+  await settings.goto(`chrome-extension://${extensionId}/settings.html`);
+  await settings.waitForSelector('#keyword-list');
+  check('设置页是整页（四个卡片）', (await settings.locator('.card').count()) === 4);
+
+  const pong = await settings.evaluate(() => chrome.runtime.sendMessage({ type: 'corePing' }));
   check('corePing 与 manifest 版本一致', pong?.result?.pong === manifestVersion, JSON.stringify(pong));
 
   // OneTab 页面用的是打补丁后的 bundle（版本常量改成读 manifest），
@@ -195,71 +203,71 @@ const zhihuHtml = '<!doctype html><html><body><h1>zhihu</h1></body></html>';
   );
   await options.close();
 
-  // ---------- 2. popup UI ----------
-  console.log('\n[2] popup');
-  check('版本号渲染', (await popup.textContent('#version')) === 'v' + manifestVersion);
-  check('三个开关 + 自动静音 + 三个站点子开关', (await popup.locator('input[type=checkbox]').count()) === 7, '共 7 个复选框');
+  // ---------- 2. settings UI ----------
+  console.log('\n[2] settings');
+  check('版本号渲染', (await settings.textContent('#version')) === 'v' + manifestVersion);
+  check('三个开关 + 自动静音 + 三个站点子开关', (await settings.locator('input[type=checkbox]').count()) === 7, '共 7 个复选框');
 
-  await popup.fill('#keyword-input', '测试关键词');
-  await popup.click('#add-keyword');
+  await settings.fill('#keyword-input', '测试关键词');
+  await settings.click('#add-keyword');
   check(
     '关键词写入 storage',
     await waitFor(async () => {
-      const data = await popup.evaluate(() => chrome.storage.local.get('blockedKeywords'));
+      const data = await settings.evaluate(() => chrome.storage.local.get('blockedKeywords'));
       return Array.isArray(data.blockedKeywords) && data.blockedKeywords.includes('测试关键词');
     })
   );
-  check('关键词出现在列表', (await popup.textContent('#keyword-list')).includes('测试关键词'));
+  check('关键词出现在列表', (await settings.textContent('#keyword-list')).includes('测试关键词'));
 
-  await popup.click('#keyword-list button[data-keyword="测试关键词"]');
+  await settings.click('#keyword-list button[data-keyword="测试关键词"]');
   check(
     '关键词可从列表删除',
     await waitFor(async () => {
-      const data = await popup.evaluate(() => chrome.storage.local.get('blockedKeywords'));
+      const data = await settings.evaluate(() => chrome.storage.local.get('blockedKeywords'));
       return Array.isArray(data.blockedKeywords) && !data.blockedKeywords.includes('测试关键词');
     })
   );
 
-  await popup.uncheck('#content-filter');
+  await settings.uncheck('#content-filter');
   check(
     '内容过滤开关写入 storage',
-    await waitFor(async () => (await popup.evaluate(() => chrome.storage.local.get('contentFilterEnabled'))).contentFilterEnabled === false)
+    await waitFor(async () => (await settings.evaluate(() => chrome.storage.local.get('contentFilterEnabled'))).contentFilterEnabled === false)
   );
-  await popup.check('#content-filter');
-  await popup.waitForTimeout(100);
+  await settings.check('#content-filter');
+  await settings.waitForTimeout(100);
 
   // 自动静音的域名管理
-  await popup.fill('#domain-input', 'https://www.instagram.com/some/path');
-  await popup.click('#add-domain');
+  await settings.fill('#domain-input', 'https://www.instagram.com/some/path');
+  await settings.click('#add-domain');
   check(
     '域名归一化后写入 storage',
     await waitFor(async () => {
-      const data = await popup.evaluate(() => chrome.storage.local.get('autoMuteDomains'));
+      const data = await settings.evaluate(() => chrome.storage.local.get('autoMuteDomains'));
       return Array.isArray(data.autoMuteDomains) && data.autoMuteDomains.includes('instagram.com');
     })
   );
-  check('归一化后的域名出现在列表', (await popup.textContent('#domain-list')).includes('instagram.com'));
+  check('归一化后的域名出现在列表', (await settings.textContent('#domain-list')).includes('instagram.com'));
 
-  await popup.fill('#domain-input', 'not a domain');
-  await popup.click('#add-domain');
-  check('非法域名给出提示', (await popup.textContent('#domain-error')).trim().length > 0);
+  await settings.fill('#domain-input', 'not a domain');
+  await settings.click('#add-domain');
+  check('非法域名给出提示', (await settings.textContent('#domain-error')).trim().length > 0);
 
-  await popup.fill('#domain-input', 'instagram.com');
-  await popup.click('#add-domain');
-  check('重复域名被拒绝', (await popup.textContent('#domain-error')).includes('已经'));
+  await settings.fill('#domain-input', 'instagram.com');
+  await settings.click('#add-domain');
+  check('重复域名被拒绝', (await settings.textContent('#domain-error')).includes('已经'));
 
-  await popup.click('#domain-list button[data-domain="instagram.com"]');
+  await settings.click('#domain-list button[data-domain="instagram.com"]');
   check(
     '域名可以从列表删除',
     await waitFor(async () => {
-      const data = await popup.evaluate(() => chrome.storage.local.get('autoMuteDomains'));
+      const data = await settings.evaluate(() => chrome.storage.local.get('autoMuteDomains'));
       return Array.isArray(data.autoMuteDomains) && !data.autoMuteDomains.includes('instagram.com');
     })
   );
 
   // ---------- 3. 后台消息路由（Na 死分支修复 / Ba 移动 / Da 删除） ----------
   console.log('\n[3] 后台消息路由');
-  await popup.evaluate(async () => {
+  await settings.evaluate(async () => {
     await chrome.storage.local.clear();
     await chrome.storage.local.set({
       tabGroups: [
@@ -269,11 +277,11 @@ const zhihuHtml = '<!doctype html><html><body><h1>zhihu</h1></body></html>';
     });
   });
 
-  const move = await popup.evaluate(() =>
+  const move = await settings.evaluate(() =>
     chrome.runtime.sendMessage({ type: 'Ba', args: ['g1', 'g2', 't1', 0] })
   );
   check('Ba 跨组移动返回成功', move && move.error === undefined, JSON.stringify(move));
-  const afterMove = await popup.evaluate(() => chrome.storage.local.get('tabGroups'));
+  const afterMove = await settings.evaluate(() => chrome.storage.local.get('tabGroups'));
   const groupsAfterMove = afterMove.tabGroups || [];
   check(
     'Ba 真的移动了标签且清理空组',
@@ -283,7 +291,7 @@ const zhihuHtml = '<!doctype html><html><body><h1>zhihu</h1></body></html>';
     JSON.stringify(groupsAfterMove)
   );
 
-  await popup.evaluate(() =>
+  await settings.evaluate(() =>
     chrome.storage.local.set({
       tabGroups: [{ id: 'g3', createDate: 3, tabsMeta: [
         { id: 'a', url: 'about:blank', title: 'A' },
@@ -292,17 +300,17 @@ const zhihuHtml = '<!doctype html><html><body><h1>zhihu</h1></body></html>';
     })
   );
   const pagesBefore = context.pages().length;
-  await popup.evaluate(() => chrome.runtime.sendMessage({ type: 'Na', args: ['g3', 'current'] }));
+  await settings.evaluate(() => chrome.runtime.sendMessage({ type: 'Na', args: ['g3', 'current'] }));
   const restored = await waitFor(() => context.pages().length >= pagesBefore + 2, 8000);
   check('Na 恢复整组会真的开标签（旧版死代码）', restored, `pages ${pagesBefore} -> ${context.pages().length}`);
 
-  // 清理刚开的标签（保留 popup）
+  // 清理刚开的标签（保留 settings）
   for (const page of context.pages()) {
-    if (page !== popup) await page.close();
+    if (page !== settings) await page.close();
   }
 
-  const del = await popup.evaluate(() => chrome.runtime.sendMessage({ type: 'Da', args: ['g3'] }));
-  const afterDel = await popup.evaluate(() => chrome.storage.local.get('tabGroups'));
+  const del = await settings.evaluate(() => chrome.runtime.sendMessage({ type: 'Da', args: ['g3'] }));
+  const afterDel = await settings.evaluate(() => chrome.storage.local.get('tabGroups'));
   check('Da 删除分组', del && (afterDel.tabGroups || []).length === 0, JSON.stringify(afterDel));
 
   // ---------- 4. 内容脚本：wnacg 过滤 / 解锁还原 ----------
@@ -424,7 +432,7 @@ const zhihuHtml = '<!doctype html><html><body><h1>zhihu</h1></body></html>';
   console.log('\n[7] 域名自动静音');
 
   const tabInfoById = (tabId) =>
-    popup.evaluate(async (id) => {
+    settings.evaluate(async (id) => {
       try {
         const t = await chrome.tabs.get(id);
         return {
@@ -440,7 +448,7 @@ const zhihuHtml = '<!doctype html><html><body><h1>zhihu</h1></body></html>';
     }, tabId);
 
   const tabInfoByPrefix = (prefix) =>
-    popup.evaluate(async (p) => {
+    settings.evaluate(async (p) => {
       const tabs = await chrome.tabs.query({});
       const t = tabs.find((x) => (x.url || '').startsWith(p));
       return t
@@ -464,11 +472,11 @@ const zhihuHtml = '<!doctype html><html><body><h1>zhihu</h1></body></html>';
   };
 
   const sessionState = () =>
-    popup
+    settings
       .evaluate(async () => (await chrome.storage.session.get('autoMuteTabState')).autoMuteTabState || {})
       .catch(() => ({}));
 
-  await popup.evaluate(() =>
+  await settings.evaluate(() =>
     chrome.storage.local.set({ autoMuteEnabled: true, autoMuteDomains: ['threads.com'] })
   );
 
@@ -506,7 +514,7 @@ const zhihuHtml = '<!doctype html><html><body><h1>zhihu</h1></body></html>';
   );
 
   // 关闭功能
-  await popup.evaluate(() => chrome.storage.local.set({ autoMuteEnabled: false }));
+  await settings.evaluate(() => chrome.storage.local.set({ autoMuteEnabled: false }));
   const disabledTab = await waitForMuted(() => tabInfoById(threadsTabId), false);
   check('关闭自动静音后现有标签被还原', disabledTab?.muted === false, JSON.stringify(disabledTab));
 
@@ -516,7 +524,7 @@ const zhihuHtml = '<!doctype html><html><body><h1>zhihu</h1></body></html>';
   check('关闭状态下新开的 Threads 不被静音', offInfo?.muted === false, JSON.stringify(offInfo));
 
   // 重新开启 + 域名增删
-  await popup.evaluate(() =>
+  await settings.evaluate(() =>
     chrome.storage.local.set({ autoMuteEnabled: true, autoMuteDomains: ['threads.com', 'example.org'] })
   );
   const reEnabled = await waitForMuted(() => tabInfoById(threadsTabId), true);
@@ -526,7 +534,7 @@ const zhihuHtml = '<!doctype html><html><body><h1>zhihu</h1></body></html>';
   const exampleOrgInfo = await waitForMuted(() => tabInfoByPrefix('https://example.org/hello'), true);
   check('新增域名后该站点自动静音', exampleOrgInfo?.muted === true, JSON.stringify(exampleOrgInfo));
 
-  await popup.evaluate(() => chrome.storage.local.set({ autoMuteDomains: ['threads.com'] }));
+  await settings.evaluate(() => chrome.storage.local.set({ autoMuteDomains: ['threads.com'] }));
   const removedDomainTab = await waitForMuted(() => tabInfoByPrefix('https://example.org/hello'), false);
   check('移除域名后不再静音并还原', removedDomainTab?.muted === false, JSON.stringify(removedDomainTab));
 
@@ -540,22 +548,22 @@ const zhihuHtml = '<!doctype html><html><body><h1>zhihu</h1></body></html>';
   await threadsOffPage.close();
 
   // 扩展 / service worker 重启后重新对齐
-  await popup.evaluate(() =>
+  await settings.evaluate(() =>
     chrome.storage.local.set({ autoMuteEnabled: true, autoMuteDomains: ['threads.com'] })
   );
   await waitForMuted(() => tabInfoById(threadsTabId), true);
-  await popup.evaluate(async (id) => {
+  await settings.evaluate(async (id) => {
     await chrome.tabs.update(id, { muted: false });
   }, threadsTabId);
   const clearedTab = await waitForMuted(() => tabInfoById(threadsTabId), false);
   check('手动改回未静音（构造重启场景）', clearedTab?.muted === false, JSON.stringify(clearedTab));
 
   // 真正把 service worker 停掉再唤醒，验证“SW 重启后重新对齐”
-  const cdp = await context.newCDPSession(popup);
+  const cdp = await context.newCDPSession(settings);
   await cdp.send('ServiceWorker.enable');
   await cdp.send('ServiceWorker.stopAllWorkers');
   await sleep(600);
-  await popup.evaluate(() => chrome.runtime.sendMessage({ type: 'corePing' })).catch(() => {});
+  await settings.evaluate(() => chrome.runtime.sendMessage({ type: 'corePing' })).catch(() => {});
   const restartedTab = await waitForMuted(() => tabInfoById(threadsTabId), true, 15000);
   check('service worker 重启后已有 Threads 标签重新被静音', restartedTab?.muted === true, JSON.stringify(restartedTab));
 

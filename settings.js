@@ -1,4 +1,4 @@
-// popup：所有开关直接写 chrome.storage.local，
+// 设置页（整页，点击工具栏图标打开）：所有开关直接写 chrome.storage.local，
 // 内容脚本靠 storage.onChanged 即时响应，不需要再发 tab 消息。
 const storage = chrome.storage.local;
 

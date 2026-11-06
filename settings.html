@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>HJX Extension 设置</title>
+    <style>
+        :root { color-scheme: light; }
+        * { box-sizing: border-box; }
+        body {
+            margin: 0;
+            padding: 36px 28px 56px;
+            background: #fff;
+            color: #111;
+            font: 14px/1.6 -apple-system, "Segoe UI", "Microsoft YaHei", Arial, sans-serif;
+        }
+        .wrap { max-width: 980px; margin: 0 auto; }
+
+        header { margin-bottom: 24px; }
+        header h1 {
+            font-size: 22px;
+            font-weight: 600;
+            margin: 0 0 4px;
+        }
+        header .version { font-size: 12px; color: #999; margin-left: 8px; font-weight: 400; }
+        header .sub { margin: 0; color: #666; font-size: 13px; }
+
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+            gap: 16px;
+            align-items: start;
+        }
+        .card {
+            border: 1px solid #e3e3e3;
+            border-radius: 10px;
+            padding: 16px 18px 18px;
+            background: #fff;
+        }
+        .card h2 {
+            font-size: 14px;
+            font-weight: 600;
+            margin: 0 0 2px;
+        }
+        .card .hint { margin: 0 0 10px; }
+
+        .row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            padding: 2px 0;
+        }
+        .row label { font-weight: 600; }
+        .row.sub { padding-left: 20px; }
+        .row.sub label { font-weight: 400; color: #333; }
+        .hint { font-size: 12px; color: #777; line-height: 1.55; }
+
+        input[type="checkbox"] {
+            width: 17px; height: 17px; margin: 0; flex: 0 0 auto; cursor: pointer;
+        }
+        button {
+            font: inherit;
+            cursor: pointer;
+            border: 1px solid #ccc;
+            background: #f7f7f7;
+            color: #111;
+            border-radius: 6px;
+            padding: 5px 12px;
+        }
+        button:hover { background: #eee; }
+        button:disabled { opacity: .5; cursor: default; }
+
+        .add-row { display: flex; gap: 8px; margin-top: 8px; }
+        .add-row input[type="text"] {
+            flex: 1 1 auto;
+            min-width: 0;
+            font: inherit;
+            padding: 5px 10px;
+            border: 1px solid #ccc;
+            border-radius: 6px;
+        }
+        .add-row input[type="text"]:focus {
+            outline: 2px solid #111;
+            outline-offset: -1px;
+        }
+
+        ul.list {
+            list-style: none;
+            margin: 8px 0 0;
+            padding: 0;
+            max-height: 240px;
+            overflow-y: auto;
+        }
+        ul.list li {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+            padding: 6px 0;
+            border-bottom: 1px solid #f0f0f0;
+        }
+        ul.list li:last-child { border-bottom: none; }
+        ul.list li span { overflow-wrap: anywhere; }
+        ul.list li button {
+            border: none;
+            background: none;
+            color: #999;
+            font-size: 16px;
+            line-height: 1;
+            padding: 2px 6px;
+        }
+        ul.list li button:hover { color: #c00; background: none; }
+
+        .empty { color: #aaa; font-size: 12px; padding: 6px 0; }
+        .error { color: #c00; font-size: 12px; min-height: 18px; margin-top: 6px; }
+        #unblock-status { font-size: 12px; color: #777; }
+        .unblock-row { margin-top: 10px; justify-content: flex-start; }
+
+        footer {
+            margin-top: 28px;
+            padding-top: 16px;
+            border-top: 1px solid #eee;
+            font-size: 12px;
+            color: #888;
+            display: flex;
+            gap: 16px;
+            flex-wrap: wrap;
+        }
+        footer a { color: #444; text-decoration: none; border-bottom: 1px solid #ddd; }
+        footer a:hover { color: #000; border-bottom-color: #000; }
+    </style>
+</head>
+<body>
+    <div class="wrap">
+        <header>
+            <h1>HJX Extension<span class="version" id="version"></span></h1>
+            <p class="sub">OneTab 标签聚合 · ACG 站点过滤 · AI 聊天快捷键 · 域名自动静音</p>
+        </header>
+
+        <div class="grid">
+            <section class="card">
+                <div class="row">
+                    <label for="access-block">访问拦截</label>
+                    <input type="checkbox" id="access-block" checked>
+                </div>
+                <p class="hint">知乎首页/关注/热榜、小红书发现页会被 OneTab 队列里的下一条顶替，队列空则打开 OneTab 页。</p>
+                <div class="row unblock-row">
+                    <button id="unblock-15">临时解锁 15 分钟</button>
+                    <button id="unblock-cancel" hidden>取消解锁</button>
+                    <span id="unblock-status"></span>
+                </div>
+            </section>
+
+            <section class="card">
+                <div class="row">
+                    <label for="content-filter">内容过滤</label>
+                    <input type="checkbox" id="content-filter" checked>
+                </div>
+                <p class="hint">wnacg 列表按分类/关键词隐藏并清洗标题；chunman4 隐藏指定标题。关掉或解锁时会把原文还原。</p>
+                <div class="add-row">
+                    <input type="text" id="keyword-input" placeholder="新增屏蔽关键词">
+                    <button id="add-keyword">添加</button>
+                </div>
+                <ul id="keyword-list" class="list"></ul>
+            </section>
+
+            <section class="card">
+                <div class="row">
+                    <label for="auto-mute">自动静音网站</label>
+                    <input type="checkbox" id="auto-mute" checked>
+                </div>
+                <p class="hint">打开这些域名（含子域名）的标签会自动静音。手动取消静音后，该标签本次停留在这个站点期间不会再被静音；换站或关掉标签后规则重新生效。</p>
+                <div class="add-row">
+                    <input type="text" id="domain-input" placeholder="例如 threads.com">
+                    <button id="add-domain">添加</button>
+                </div>
+                <div id="domain-error" class="error"></div>
+                <ul id="domain-list" class="list"></ul>
+            </section>
+
+            <section class="card">
+                <div class="row">
+                    <label for="ai-shortcuts">AI 快捷键</label>
+                    <input type="checkbox" id="ai-shortcuts" checked>
+                </div>
+                <p class="hint">Enter 发送、Shift+Enter 换行、Ctrl+Enter 换行。</p>
+                <div class="row sub">
+                    <label for="ai-gemini">Gemini</label>
+                    <input type="checkbox" id="ai-gemini" data-site="gemini" checked>
+                </div>
+                <div class="row sub">
+                    <label for="ai-chatgpt">ChatGPT</label>
+                    <input type="checkbox" id="ai-chatgpt" data-site="chatgpt" checked>
+                </div>
+                <div class="row sub">
+                    <label for="ai-claude">Claude</label>
+                    <input type="checkbox" id="ai-claude" data-site="claude" checked>
+                </div>
+            </section>
+        </div>
+
+        <footer>
+            <a href="onetab.html">OneTab 标签页</a>
+            <a href="import-export.html">导入 / 导出</a>
+            <a href="options.html">OneTab 选项</a>
+            <span>设置改动即时生效，无需重载扩展。</span>
+        </footer>
+    </div>
+
+    <script src="auto_mute.js"></script>
+    <script src="settings.js"></script>
+</body>
+</html>
