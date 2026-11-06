@@ -575,6 +575,26 @@ const zhihuHtml = '<!doctype html><html><body><h1>zhihu</h1></body></html>';
     JSON.stringify(stateAfterRestart)
   );
 
+  // ---------- 8. 工具栏图标 -> 整页设置 ----------
+  console.log('\n[8] 工具栏图标');
+  await settings.close();
+  await sleep(400);
+
+  const hasOpener = await sw.evaluate(() => typeof openSettingsPage === 'function');
+  check('后台注册了 openSettingsPage（onClicked 的落地函数）', hasOpener === true);
+
+  await sw.evaluate(() => openSettingsPage());
+  const openedSettings = await waitFor(
+    async () => context.pages().some((p) => p.url().endsWith('/settings.html')),
+    8000
+  );
+  check('调用后打开整页设置标签', openedSettings === true);
+
+  await sw.evaluate(() => openSettingsPage());
+  await sleep(1000);
+  const settingsCount = context.pages().filter((p) => p.url().endsWith('/settings.html')).length;
+  check('已打开时只聚焦、不重复开', settingsCount === 1, 'count=' + settingsCount);
+
   await context.close();
   await plainBrowser.close();
   rmSync(profile, { recursive: true, force: true });
