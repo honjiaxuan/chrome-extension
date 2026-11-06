@@ -9,6 +9,7 @@ const els = {
   contentFilter: document.getElementById('content-filter'),
   aiShortcuts: document.getElementById('ai-shortcuts'),
   autoMute: document.getElementById('auto-mute'),
+  dedupeEnabled: document.getElementById('dedupe-enabled'),
   keywordInput: document.getElementById('keyword-input'),
   addKeyword: document.getElementById('add-keyword'),
   keywordList: document.getElementById('keyword-list'),
@@ -16,6 +17,12 @@ const els = {
   addDomain: document.getElementById('add-domain'),
   domainList: document.getElementById('domain-list'),
   domainError: document.getElementById('domain-error'),
+  dedupeInput: document.getElementById('dedupe-input'),
+  addDedupe: document.getElementById('add-dedupe'),
+  dedupeList: document.getElementById('dedupe-list'),
+  dedupeError: document.getElementById('dedupe-error'),
+  dedupeNow: document.getElementById('dedupe-now'),
+  dedupeStatus: document.getElementById('dedupe-status'),
   unblock15: document.getElementById('unblock-15'),
   unblockCancel: document.getElementById('unblock-cancel'),
   unblockStatus: document.getElementById('unblock-status'),
@@ -24,6 +31,7 @@ const els = {
 
 let keywords = [];
 let domains = [];
+let dedupeDomains = [];
 
 function readState() {
   return storage.get({
@@ -32,6 +40,9 @@ function readState() {
     aiShortcutsEnabled: true,
     autoMuteEnabled: true,
     autoMuteDomains: ['threads.com'],
+    dedupeEnabled: true,
+    dedupeDomains: ['threads.com', 'zhihu.com'],
+    dedupeLastResult: null,
     aiDisabledSites: [],
     blockedKeywords: [],
     unblockUntil: 0
@@ -98,6 +109,41 @@ function renderDomains() {
   }
 }
 
+function renderDedupeDomains() {
+  els.dedupeList.textContent = '';
+  if (dedupeDomains.length === 0) {
+    const empty = document.createElement('li');
+    empty.className = 'empty';
+    empty.textContent = '未配置域名（点图标不会清理）';
+    els.dedupeList.appendChild(empty);
+    return;
+  }
+
+  for (const domain of dedupeDomains) {
+    const li = document.createElement('li');
+    const span = document.createElement('span');
+    span.textContent = domain;
+
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.textContent = '×';
+    remove.title = '删除';
+    remove.dataset.dedupeDomain = domain;
+
+    li.append(span, remove);
+    els.dedupeList.appendChild(li);
+  }
+}
+
+function renderDedupeStatus(result) {
+  if (!result || !result.at) {
+    els.dedupeStatus.textContent = '';
+    return;
+  }
+  els.dedupeStatus.textContent =
+    '上次清理：关闭 ' + (result.closed || 0) + ' 个（' + new Date(result.at).toLocaleString() + '）';
+}
+
 function render(state) {
   els.accessBlock.checked = state.extensionEnabled !== false;
   els.contentFilter.checked = state.contentFilterEnabled !== false;
@@ -115,6 +161,13 @@ function render(state) {
   const fallbackDomains = globalThis.HJX_AUTO_MUTE?.DEFAULT_DOMAINS || ['threads.com'];
   domains = (Array.isArray(state.autoMuteDomains) ? state.autoMuteDomains : fallbackDomains).slice();
   renderDomains();
+
+  els.dedupeEnabled.checked = state.dedupeEnabled !== false;
+  dedupeDomains = (
+    Array.isArray(state.dedupeDomains) ? state.dedupeDomains : ['threads.com', 'zhihu.com']
+  ).slice();
+  renderDedupeDomains();
+  renderDedupeStatus(state.dedupeLastResult);
 
   renderUnblock(Number(state.unblockUntil) || 0);
 }
@@ -160,6 +213,48 @@ function addDomain() {
   els.domainInput.value = '';
   saveDomains([...domains, normalized]);
   els.domainInput.focus();
+}
+
+async function saveDedupeDomains(next) {
+  dedupeDomains = next;
+  renderDedupeDomains();
+  await storage.set({ dedupeDomains: next });
+}
+
+function addDedupeDomain() {
+  const raw = els.dedupeInput.value.trim();
+  if (!raw) return;
+
+  const normalize = globalThis.HJX_DOMAINS?.normalizeDomain || globalThis.HJX_AUTO_MUTE?.normalizeDomain;
+  const normalized = normalize ? normalize(raw) : raw.toLowerCase();
+  if (!normalized) {
+    els.dedupeError.textContent = '看起来不是一个域名，例如 threads.com';
+    return;
+  }
+  if (dedupeDomains.includes(normalized)) {
+    els.dedupeError.textContent = '这个域名已经在列表里';
+    return;
+  }
+
+  els.dedupeError.textContent = '';
+  els.dedupeInput.value = '';
+  saveDedupeDomains([...dedupeDomains, normalized]);
+  els.dedupeInput.focus();
+}
+
+async function runDedupeNow() {
+  els.dedupeNow.disabled = true;
+  els.dedupeStatus.textContent = '清理中…';
+  try {
+    const response = await chrome.runtime.sendMessage({ type: 'dedupeNow' });
+    const result = response && response.result ? response.result : null;
+    renderDedupeStatus(result);
+    if (!result) els.dedupeStatus.textContent = '清理失败：没有收到后台返回';
+  } catch (e) {
+    els.dedupeStatus.textContent = '清理失败：' + e.message;
+  } finally {
+    els.dedupeNow.disabled = false;
+  }
 }
 
 function bindSiteToggles() {
@@ -209,6 +304,26 @@ function bindEvents() {
     if (!btn) return;
     saveDomains(domains.filter((domain) => domain !== btn.dataset.domain));
   });
+
+  els.dedupeEnabled.addEventListener('change', () =>
+    storage.set({ dedupeEnabled: els.dedupeEnabled.checked })
+  );
+  els.addDedupe.addEventListener('click', addDedupeDomain);
+  els.dedupeInput.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      addDedupeDomain();
+    }
+  });
+  els.dedupeInput.addEventListener('input', () => {
+    els.dedupeError.textContent = '';
+  });
+  els.dedupeList.addEventListener('click', (event) => {
+    const btn = event.target.closest('button[data-dedupe-domain]');
+    if (!btn) return;
+    saveDedupeDomains(dedupeDomains.filter((domain) => domain !== btn.dataset.dedupeDomain));
+  });
+  els.dedupeNow.addEventListener('click', runDedupeNow);
 
   els.unblock15.addEventListener('click', async () => {
     const until = Date.now() + UNBLOCK_MS;

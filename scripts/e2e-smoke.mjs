@@ -166,7 +166,7 @@ const zhihuHtml = '<!doctype html><html><body><h1>zhihu</h1></body></html>';
   const settings = await context.newPage();
   await settings.goto(`chrome-extension://${extensionId}/settings.html`);
   await settings.waitForSelector('#keyword-list');
-  check('设置页是整页（四个卡片）', (await settings.locator('.card').count()) === 4);
+  check('设置页是整页（五个卡片）', (await settings.locator('.card').count()) === 5);
 
   const pong = await settings.evaluate(() => chrome.runtime.sendMessage({ type: 'corePing' }));
   check('corePing 与 manifest 版本一致', pong?.result?.pong === manifestVersion, JSON.stringify(pong));
@@ -206,7 +206,7 @@ const zhihuHtml = '<!doctype html><html><body><h1>zhihu</h1></body></html>';
   // ---------- 2. settings UI ----------
   console.log('\n[2] settings');
   check('版本号渲染', (await settings.textContent('#version')) === 'v' + manifestVersion);
-  check('三个开关 + 自动静音 + 三个站点子开关', (await settings.locator('input[type=checkbox]').count()) === 7, '共 7 个复选框');
+  check('四个总开关 + 三个站点子开关', (await settings.locator('input[type=checkbox]').count()) === 8, '共 8 个复选框');
 
   await settings.fill('#keyword-input', '测试关键词');
   await settings.click('#add-keyword');
@@ -575,8 +575,67 @@ const zhihuHtml = '<!doctype html><html><body><h1>zhihu</h1></body></html>';
     JSON.stringify(stateAfterRestart)
   );
 
-  // ---------- 8. 工具栏图标 -> 整页设置 ----------
-  console.log('\n[8] 工具栏图标');
+  // ---------- 8. 重复标签清理 ----------
+  console.log('\n[8] 重复标签清理');
+
+  check(
+    '默认清理域名是 threads.com + zhihu.com',
+    (await settings.textContent('#dedupe-list')).includes('threads.com') &&
+      (await settings.textContent('#dedupe-list')).includes('zhihu.com')
+  );
+
+  await settings.fill('#dedupe-input', 'https://www.example.org/some/path');
+  await settings.click('#add-dedupe');
+  check(
+    '新增清理域名写入 storage',
+    await waitFor(async () => {
+      const data = await settings.evaluate(() => chrome.storage.local.get('dedupeDomains'));
+      return Array.isArray(data.dedupeDomains) && data.dedupeDomains.includes('example.org');
+    })
+  );
+  await settings.click('#dedupe-list button[data-dedupe-domain="example.org"]');
+  check(
+    '删除清理域名写回 storage',
+    await waitFor(async () => {
+      const data = await settings.evaluate(() => chrome.storage.local.get('dedupeDomains'));
+      return Array.isArray(data.dedupeDomains) && !data.dedupeDomains.includes('example.org');
+    })
+  );
+
+  const dedupePages = [];
+  const openDedupePage = async (url) => {
+    const page = await newRoutedPage(context, url);
+    dedupePages.push(page);
+    return page;
+  };
+  await openDedupePage('https://www.threads.com/@dedupe/post/1?xmt=aaa');
+  await openDedupePage('https://www.threads.com/@dedupe/post/1?xmt=bbb');
+  await openDedupePage('https://www.threads.com/@dedupe/post/2');
+  await openDedupePage('https://www.zhihu.com/question/1?utm_source=x');
+  await openDedupePage('https://www.zhihu.com/question/1');
+  await openDedupePage('https://example.com/dup');
+  await openDedupePage('https://example.com/dup');
+
+  await settings.click('#dedupe-now');
+  await waitFor(async () => {
+    const text = await settings.textContent('#dedupe-status');
+    return typeof text === 'string' && text.includes('关闭');
+  }, 10000);
+  const dedupeStatusText = await settings.textContent('#dedupe-status');
+  check('点“立即清理”有结果反馈', /关闭\s*\d+\s*个/.test(dedupeStatusText || ''), String(dedupeStatusText));
+
+  const countPages = (needle) => context.pages().filter((page) => page.url().includes(needle)).length;
+  check('Threads 同页不同 xmt 只留一个', countPages('/@dedupe/post/1') === 1, 'count=' + countPages('/@dedupe/post/1'));
+  check('Threads 不同帖子都保留', countPages('/@dedupe/post/2') === 1, 'count=' + countPages('/@dedupe/post/2'));
+  check('知乎同题不同 utm 只留一个', countPages('zhihu.com/question/1') === 1, 'count=' + countPages('zhihu.com/question/1'));
+  check('未配置域名不清理', countPages('example.com/dup') === 2, 'count=' + countPages('example.com/dup'));
+
+  for (const page of dedupePages) {
+    if (!page.isClosed()) await page.close().catch(() => {});
+  }
+
+  // ---------- 9. 工具栏图标 -> 整页设置 ----------
+  console.log('\n[9] 工具栏图标');
   await settings.close();
   await sleep(400);
 

@@ -9,6 +9,7 @@
 3. **AI 聊天快捷键**：Gemini / ChatGPT / Claude 上把 Enter 改成发送，Shift+Enter / Ctrl+Enter 换行。
 4. **missav**：阻止“切走标签就暂停”的检测，标题不截断，隐藏右下角广告浮层。
 5. **域名自动静音**：打开配置域名（默认 `threads.com`，含子域名）的标签自动静音；用户手动取消静音后，该标签在本次停留期间不再被静音。
+6. **重复标签清理**：点工具栏图标时，关闭配置域名（默认 `threads.com`、`zhihu.com`）下的重复标签；同一页面（忽略 `#` 与 `utm_*`/`xmt` 等跟踪参数）保留一个，固定标签不动。
 
 ## 目录
 
@@ -18,6 +19,8 @@
 | `config.js` | 域名 / 选择器 / 清洗正则总表（改规则只改这里） |
 | `background.js` | OneTab 后端 + 访问拦截落地动作 + 自动静音初始化 |
 | `auto_mute.js` | 域名自动静音状态机（service worker 侧，`importScripts` 加载） |
+| `dedupe.js` | 重复标签清理（点图标时执行，纯函数可单测） |
+| `domain_utils.js` | 域名归一化/匹配，SW 与设置页共用 |
 | `content.js` | 访问拦截、wnacg / chunman 过滤、标题清洗 |
 | `ai_shortcuts.js` | 三个 AI 站的键盘行为（共用一份） |
 | `missav_main.js` | MAIN world 内容脚本，伪装可见性 |
@@ -54,6 +57,8 @@ NODE_PATH=/home/hjx/node_modules node scripts/e2e-smoke.mjs
 - **改 OneTab bundle**：它是解包压缩代码，只做最小字符串级修改并在这里记录。
 - **临时解锁**：`chrome.storage.local.unblockUntil`（毫秒时间戳）。设置页里的“临时解锁 15 分钟”写这个键，
   内容脚本通过 `storage.onChanged` 即时生效，不需要刷新页面。
+- **重复标签清理**：`chrome.storage.local.dedupeEnabled` / `dedupeDomains`，上次结果写 `dedupeLastResult`；
+  点图标时先清一遍再打开设置页，设置页里也有“立即清理”（走消息 `dedupeNow`）。
 - **自动静音**：配置在 `chrome.storage.local.autoMuteEnabled` / `autoMuteDomains`；
   每个标签的归属与 override 记在 `chrome.storage.session.autoMuteTabState`（SW 重启不丢，关标签即清）。
   只信 `mutedInfo.reason`：`user` 是用户，`extension` + 自己的 `extensionId` 才是我们。

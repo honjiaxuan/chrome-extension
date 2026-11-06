@@ -1,11 +1,11 @@
 {
   "name": "hjx-extension",
-  "version": "2.13.0",
+  "version": "2.14.0",
   "private": true,
   "description": "个人浏览器扩展：OneTab 标签聚合 + ACG 站点过滤 + AI 聊天快捷键",
   "scripts": {
     "verify": "node scripts/verify.mjs",
-    "test:unit": "node scripts/unit-auto-mute.mjs",
+    "test:unit": "node scripts/unit-auto-mute.mjs && node scripts/unit-dedupe.mjs",
     "test:e2e": "node scripts/e2e-smoke.mjs"
   },
   "devDependencies": {

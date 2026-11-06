@@ -8,10 +8,11 @@
 ```bash
 node scripts/verify.mjs                                     # 静态：manifest 引用 / 死文件 / 版本号 / 域名一致
 node scripts/unit-auto-mute.mjs                             # 自动静音状态机（纯 Node，36 项）
-NODE_PATH=/home/hjx/node_modules node scripts/e2e-smoke.mjs # 真浏览器（50 项）
+node scripts/unit-dedupe.mjs                                # 重复标签判定（纯 Node，19 项）
+NODE_PATH=/home/hjx/node_modules node scripts/e2e-smoke.mjs # 真浏览器（63 项）
 ```
 
-`e2e-smoke.mjs` 覆盖（50 项）：
+`e2e-smoke.mjs` 覆盖（63 项）：
 
 - 扩展能以未打包形式加载、service worker 起来、manifest 版本与 package.json 一致
 - `corePing` 与 manifest 版本一致（OneTab bundle 版本补丁没打歪）
@@ -21,6 +22,7 @@ NODE_PATH=/home/hjx/node_modules node scripts/e2e-smoke.mjs # 真浏览器（50 
 - 内容脚本：wnacg 分类/关键词隐藏、标题清洗、临时解锁后还原、关掉过滤后不动页面
 - 内容脚本：知乎首页带查询参数仍被拦截、问答页不拦截、SPA pushState 到首页 1 秒内被拦截
 - AI 快捷键：Enter 发送、Shift/Ctrl+Enter 不发送、总开关和单站开关生效
+- 重复标签清理：默认域名、域名增删、点“立即清理”的结果反馈、Threads/知乎的去重、未配置域名不动
 - 自动静音（真实 `chrome.tabs` 静音状态）：帖子 URL 带查询参数自动静音、子域名静音、
   离开域名还原、回来重新静音、关标签清状态、关闭/开启功能、域名增删、`notthreads.com` 误匹配、
   service worker 被停止后重启又自动对齐
@@ -55,8 +57,23 @@ NODE_PATH=/home/hjx/node_modules node scripts/e2e-smoke.mjs # 真浏览器（50 
     在域名列表里加 `example.org` → 打开该站点被静音；删掉 → 取消静音。
 19. 浏览器完全退出再启动、恢复上次会话 → Threads 标签仍然是静音的。
 20. 用户自己原本就静音的标签（右键“静音标签页”）：进入/离开配置域名都不会被扩展改回未静音。
-21. 点工具栏的 HJX Extension 图标 → 在新标签打开整页设置（四个卡片、宽屏两列）；再点一次 →
+21. 点工具栏的 HJX Extension 图标 → 在新标签打开整页设置（五个卡片、宽屏两列）；再点一次 →
     聚焦已打开的那个设置标签，不会开第二个。
+22. 先开两个相同的 Threads 帖子（URL 只差 ?xmt=…）和两个相同的知乎问题（只差 ?utm_source=…），
+    再开两个相同的 example.com 页面；点工具栏图标 → Threads/知乎各只剩一个，example.com 两个都还在，
+    设置页显示“上次清理：关闭 N 个”。
+23. 设置页“重复标签清理”卡片：新增/删除域名即时生效；“立即清理”手动触发一次同样有效。
+
+## 2.14 变更摘要
+
+- 新增：`dedupe.js` 重复标签清理 + `domain_utils.js`（域名工具抽出来共用，`auto_mute.js` 改为引用它）。
+- 行为：点工具栏图标 = 先清理配置域名下的重复标签，再打开整页设置；设置页新增“重复标签清理”卡片
+  （开关、域名 CRUD、“立即清理”、上次清理结果）。
+- 去重规则：同一页面 = origin + pathname + 去掉 `#` 和跟踪参数（`utm_*`、`xmt`、`share_id` 等）后的 query；
+  保留当前激活的标签，否则保留最左边那个；固定标签不参与；跨窗口也生效。
+- 新增存储键：`dedupeEnabled`、`dedupeDomains`、`dedupeLastResult`。
+- 版本：manifest / package.json 升到 2.14。
+- 测试：新增 `scripts/unit-dedupe.mjs`（19 项）；e2e 扩到 63 项；verify 增加 importScripts 存在性检查。
 
 ## 2.13 变更摘要
 

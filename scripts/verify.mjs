@@ -137,12 +137,20 @@ for (const perm of declared) {
 
 console.log('\n[8] 危险写法');
 if (/\.innerHTML\s*=/.test(read('settings.js'))) warn('settings.js 用了 innerHTML');
-for (const file of ['content.js', 'ai_shortcuts.js', 'missav_main.js', 'background.js', 'auto_mute.js']) {
+for (const file of ['content.js', 'ai_shortcuts.js', 'missav_main.js', 'background.js', 'auto_mute.js', 'dedupe.js', 'domain_utils.js']) {
   const src = read(file);
   if (/\beval\s*\(/.test(src)) fail(file + ' 用了 eval');
   if (/innerHTML\s*=/.test(src)) warn(file + ' 用了 innerHTML');
 }
 ok('检查完成');
+
+console.log('\n[9] background 的 importScripts 都存在');
+const backgroundSource = read('background.js');
+const importTargets = [...backgroundSource.matchAll(/importScripts\(\s*['"]([^'"]+)['"]\s*\)/g)].map((m) => m[1]);
+for (const file of importTargets) {
+  if (existsSync(join(root, file))) ok(file);
+  else fail('importScripts 指向不存在的文件: ' + file);
+}
 
 console.log('\n----------------------------------------');
 if (warns.length) console.log('警告 ' + warns.length + ' 条');

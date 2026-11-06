@@ -103,6 +103,8 @@ function makeChrome() {
 function loadModule(env) {
   // vm 的干净上下文里没有 URL 等宿主 API，需要显式注入
   const ctx = vm.createContext({ chrome: env.chrome, console, URL, setTimeout, clearTimeout });
+  // auto_mute.js 依赖 domain_utils.js 提供的 HJX_DOMAINS
+  vm.runInContext(readFileSync(join(root, 'domain_utils.js'), 'utf8'), ctx);
   vm.runInContext(source, ctx);
   return ctx.HJX_AUTO_MUTE;
 }

@@ -1,17 +1,26 @@
 // OneTab 后端 + ACG 拦截后端
 // 版本号唯一来源是 manifest.json（options.html 与 OneTab 前端也都改成读它）
+importScripts('domain_utils.js');
 importScripts('auto_mute.js');
+importScripts('dedupe.js');
 
 const wt = chrome.runtime.getManifest().version;
 
 chrome.runtime.onInstalled.addListener(async () => {
     createContextMenu();
 
-    // 自动静音的默认配置只在键缺失时写入，避免覆盖用户已经删空的域名列表
-    const data = await chrome.storage.local.get(['autoMuteEnabled', 'autoMuteDomains']);
+    // 自动静音 / 重复标签清理的默认配置只在键缺失时写入，避免覆盖用户已经删空的域名列表
+    const data = await chrome.storage.local.get([
+        'autoMuteEnabled',
+        'autoMuteDomains',
+        'dedupeEnabled',
+        'dedupeDomains'
+    ]);
     const patch = {};
     if (typeof data.autoMuteEnabled !== 'boolean') patch.autoMuteEnabled = true;
     if (!Array.isArray(data.autoMuteDomains)) patch.autoMuteDomains = ['threads.com'];
+    if (typeof data.dedupeEnabled !== 'boolean') patch.dedupeEnabled = true;
+    if (!Array.isArray(data.dedupeDomains)) patch.dedupeDomains = ['threads.com', 'zhihu.com'];
     if (Object.keys(patch).length > 0) await chrome.storage.local.set(patch);
 });
 
@@ -176,7 +185,10 @@ async function openSettingsPage() {
 }
 
 chrome.action.onClicked.addListener(() => {
-    openSettingsPage();
+    // 点图标 = 清一遍配置域名里的重复标签，然后打开整页设置（能看到清理结果）
+    HJX_DEDUPE.closeDuplicates()
+        .catch((err) => console.warn('[dedupe] 清理失败:', err))
+        .finally(() => openSettingsPage());
 });
 
 async function sendTabsToOneTab(tabs, force = false) {
@@ -367,6 +379,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                 }
                 case 'Ua':
                     responseData = {};
+                    break;
+                case 'dedupeNow':
+                    responseData = await HJX_DEDUPE.closeDuplicates();
                     break;
                 case 'Da': {
                     const { groups, storageKey } = await readGroups();

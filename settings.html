@@ -180,6 +180,24 @@
 
             <section class="card">
                 <div class="row">
+                    <label for="dedupe-enabled">重复标签清理</label>
+                    <input type="checkbox" id="dedupe-enabled" checked>
+                </div>
+                <p class="hint">点击扩展图标时，在这些域名（含子域名）下关闭重复的标签：同一页面（忽略 # 片段和 utm_/xmt 等跟踪参数）只保留一个，优先保留当前激活的；固定标签不动。</p>
+                <div class="add-row">
+                    <input type="text" id="dedupe-input" placeholder="例如 threads.com">
+                    <button id="add-dedupe">添加</button>
+                </div>
+                <div id="dedupe-error" class="error"></div>
+                <ul id="dedupe-list" class="list"></ul>
+                <div class="row" style="margin-top:10px; justify-content:flex-start">
+                    <button id="dedupe-now">立即清理</button>
+                    <span id="dedupe-status" class="hint" style="margin:0"></span>
+                </div>
+            </section>
+
+            <section class="card">
+                <div class="row">
                     <label for="ai-shortcuts">AI 快捷键</label>
                     <input type="checkbox" id="ai-shortcuts" checked>
                 </div>
@@ -207,6 +225,7 @@
         </footer>
     </div>
 
+    <script src="domain_utils.js"></script>
     <script src="auto_mute.js"></script>
     <script src="settings.js"></script>
 </body>
