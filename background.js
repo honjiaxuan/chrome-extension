@@ -247,7 +247,22 @@ async function sendTabsToOneTab(tabs, force = false) {
     await writeGroups(groups, storageKey);
 
     const tabsToRemove = filteredTabs.filter((t) => t.id !== undefined).map((t) => t.id);
-    if (tabsToRemove.length > 0) await chrome.tabs.remove(tabsToRemove);
+    if (tabsToRemove.length > 0) {
+        // 组已经写进存储了；这里删标签失败不能抛出去，否则调用方会以为整次归档失败，
+        // 重新武装后下一次事件会把同一批 URL 再存一遍。
+        try {
+            await chrome.tabs.remove(tabsToRemove);
+        } catch (e) {
+            // 批里有已经关掉的标签：逐个重试，把还在的删掉
+            for (const id of tabsToRemove) {
+                try {
+                    await chrome.tabs.remove(id);
+                } catch (err) {
+                    // 已经不在了
+                }
+            }
+        }
+    }
 
     return filteredTabs.length;
 }
