@@ -1,6 +1,6 @@
-# 冒烟清单（2.12）
+# 冒烟清单（2.15）
 
-改动涉及后台路由、内容脚本、设置页、自动静音状态机和 OneTab bundle，任何一项都可能静默失效
+改动涉及后台路由、内容脚本、设置页、自动静音状态机、标签超限归档和 OneTab bundle，任何一项都可能静默失效
 （不报错、只是“不生效”），所以每次改完按下面顺序过一遍。
 
 ## 自动化
@@ -9,26 +9,34 @@
 node scripts/verify.mjs                                     # 静态：manifest 引用 / 死文件 / 版本号 / 域名一致
 node scripts/unit-auto-mute.mjs                             # 自动静音状态机（纯 Node，36 项）
 node scripts/unit-dedupe.mjs                                # 重复标签判定（纯 Node，19 项）
-NODE_PATH=/home/hjx/node_modules node scripts/e2e-smoke.mjs # 真浏览器（63 项）
+node scripts/unit-tab-overflow.mjs                          # 标签超限归档状态机（纯 Node，27 项）
+NODE_PATH=/home/hjx/node_modules node scripts/e2e-smoke.mjs # 真浏览器（76 项）
 ```
 
-`e2e-smoke.mjs` 覆盖（63 项）：
+`e2e-smoke.mjs` 覆盖（76 项）：
 
 - 扩展能以未打包形式加载、service worker 起来、manifest 版本与 package.json 一致
 - `corePing` 与 manifest 版本一致（OneTab bundle 版本补丁没打歪）
 - OneTab 页能初始化、options 页版本号来自 manifest
-- 设置页：整页四卡片、版本渲染、关键词增删、内容过滤开关、自动静音域名增删（归一化 / 拒绝重复 / 非法输入）
-- 后台：`Na` 恢复整组真的开标签、`Ba` 跨组移动并清理空组、`Da` 删除分组
+- 设置页：整页六个功能区、版本渲染、关键词增删、内容过滤开关、自动静音域名增删（归一化 / 拒绝重复 / 非法输入）、
+  标签超限阈值保存与越界提示
+- 后台：`Na` 恢复整组真的开标签、`Ba` 跨组移动并清理空组、`Da` 删除分组、
+  `Da(group,true)` 先恢复再删组（2.15 修复）
 - 内容脚本：wnacg 分类/关键词隐藏、标题清洗、临时解锁后还原、关掉过滤后不动页面
 - 内容脚本：知乎首页带查询参数仍被拦截、问答页不拦截、SPA pushState 到首页 1 秒内被拦截
 - AI 快捷键：Enter 发送、Shift/Ctrl+Enter 不发送、总开关和单站开关生效
 - 重复标签清理：默认域名、域名增删、点“立即清理”的结果反馈、Threads/知乎的去重、未配置域名不动
+- 标签超限归档（真实 `chrome.tabs`）：阈值 5 时第 5 个标签触发，归档 3 个、扩展页与当前标签不进、
+  `lastResult` 记录、未越线不重复、恢复分组不会被立刻收回、恢复并删除真的恢复
 - 自动静音（真实 `chrome.tabs` 静音状态）：帖子 URL 带查询参数自动静音、子域名静音、
   离开域名还原、回来重新静音、关标签清状态、关闭/开启功能、域名增删、`notthreads.com` 误匹配、
   service worker 被停止后重启又自动对齐
 
 `unit-auto-mute.mjs` 覆盖（36 项）：域名归一化与误匹配、override 生命周期、
 用户/其他扩展静音的所有权判定、竞态补偿、tab replacement 状态迁移。
+
+`unit-tab-overflow.mjs` 覆盖（27 项）：阈值钳制、活动标签保留、49/50 边界、解除武装与重新武装、
+窗口隔离、开关与自定义阈值、抑制窗口、归档失败重试、5 标签窗口的完整流程。
 
 ## 手动清单（真机 Edge，10 分钟）
 
@@ -63,6 +71,25 @@ NODE_PATH=/home/hjx/node_modules node scripts/e2e-smoke.mjs # 真浏览器（63 
     再开两个相同的 example.com 页面；点工具栏图标 → Threads/知乎各只剩一个，example.com 两个都还在，
     设置页显示“上次清理：关闭 N 个”。
 23. 设置页“重复标签清理”卡片：新增/删除域名即时生效；“立即清理”手动触发一次同样有效。
+24. 设置页“标签超限自动归档”：阈值改成 5 并保存 → 在同一个窗口继续开标签到第 5 个 →
+   除当前标签外的标签被收进 OneTab，扩展图标角标显示归档数量；设置页显示“当前窗口 N 个标签”
+   和“上次自动归档：收进 N 个”。
+25. 在 OneTab 页对一个分组点“恢复全部” → 恢复出来的标签不会被立刻收回（20 秒抑制窗口）；
+   再点“恢复并删除” → 标签真的打开且该分组消失（2.15 修复，旧版只会删组）。
+26. 完全退出浏览器再启动、恢复上次会话 → 启动后 60 秒内不会自动归档会话恢复出来的标签。
+
+## 2.15 变更摘要
+
+- 新增：`tab_overflow.js` 标签超限自动归档状态机 + 设置页“标签超限自动归档”卡片（开关、阈值 5–500、当前窗口计数、上次结果）。
+- 行为：单个窗口的标签数达到阈值（默认 50）时，把除“当前标签”以外的标签收进 OneTab，然后关闭它们；
+  固定标签、排除名单、扩展页和浏览器内部页（`chrome://`、`edge://`、`about:` 等）不进 OneTab。
+- 防循环：触发一次后解除武装，窗口计数回落到阈值以下才重新武装；浏览器启动后 60 秒、OneTab 恢复分组后 20 秒不触发。
+- 修复：OneTab 的“恢复并删除”走 `Da(groupId, true, mode)`，旧版后台只删组、不恢复标签；现在先恢复再删组。
+- 修复：`sendTabsToOneTab` 不再归档 `chrome://` / `edge://` / `about:` / 扩展页（存进去也恢复不回来）。
+- 新增存储键：`tabOverflowEnabled`、`tabOverflowThreshold`、`tabOverflowLastResult`（session：`tabOverflowState`、`tabOverflowSuppressUntil`）。
+- 版本：manifest / package.json 升到 2.15。
+- 测试：新增 `scripts/unit-tab-overflow.mjs`（27 项）；e2e 扩到 76 项（含真实 `chrome.tabs` 的归档与恢复）；
+  e2e 里“卡片数/复选框总数”这类脆弱断言改成按 id 断言。
 
 ## 2.14 变更摘要
 

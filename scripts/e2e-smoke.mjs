@@ -166,7 +166,12 @@ const zhihuHtml = '<!doctype html><html><body><h1>zhihu</h1></body></html>';
   const settings = await context.newPage();
   await settings.goto(`chrome-extension://${extensionId}/settings.html`);
   await settings.waitForSelector('#keyword-list');
-  check('设置页是整页（五个卡片）', (await settings.locator('.card').count()) === 5);
+  const settingsCards = ['access-block', 'content-filter', 'auto-mute', 'dedupe-enabled', 'tab-overflow', 'ai-shortcuts'];
+  const missingCards = [];
+  for (const id of settingsCards) {
+    if ((await settings.locator('#' + id).count()) !== 1) missingCards.push(id);
+  }
+  check('设置页是整页，六个功能区都在', missingCards.length === 0, 'missing=' + missingCards.join(','));
 
   const pong = await settings.evaluate(() => chrome.runtime.sendMessage({ type: 'corePing' }));
   check('corePing 与 manifest 版本一致', pong?.result?.pong === manifestVersion, JSON.stringify(pong));
@@ -206,7 +211,23 @@ const zhihuHtml = '<!doctype html><html><body><h1>zhihu</h1></body></html>';
   // ---------- 2. settings UI ----------
   console.log('\n[2] settings');
   check('版本号渲染', (await settings.textContent('#version')) === 'v' + manifestVersion);
-  check('四个总开关 + 三个站点子开关', (await settings.locator('input[type=checkbox]').count()) === 8, '共 8 个复选框');
+  const namedControls = [
+    'access-block',
+    'content-filter',
+    'auto-mute',
+    'dedupe-enabled',
+    'tab-overflow',
+    'overflow-threshold',
+    'ai-shortcuts',
+    'ai-gemini',
+    'ai-chatgpt',
+    'ai-claude'
+  ];
+  const missingControls = [];
+  for (const id of namedControls) {
+    if ((await settings.locator('#' + id).count()) !== 1) missingControls.push(id);
+  }
+  check('设置页的开关/输入框按 id 全部存在', missingControls.length === 0, 'missing=' + missingControls.join(','));
 
   await settings.fill('#keyword-input', '测试关键词');
   await settings.click('#add-keyword');
@@ -264,6 +285,20 @@ const zhihuHtml = '<!doctype html><html><body><h1>zhihu</h1></body></html>';
       return Array.isArray(data.autoMuteDomains) && !data.autoMuteDomains.includes('instagram.com');
     })
   );
+
+  // 标签超限自动归档的阈值
+  await settings.fill('#overflow-threshold', '42');
+  await settings.click('#save-overflow');
+  check(
+    '阈值写入 storage',
+    await waitFor(async () => (await settings.evaluate(() => chrome.storage.local.get('tabOverflowThreshold'))).tabOverflowThreshold === 42)
+  );
+  await settings.fill('#overflow-threshold', '1');
+  await settings.click('#save-overflow');
+  check('越界阈值给出提示', (await settings.textContent('#overflow-error')).includes('5 到 500'));
+  await settings.fill('#overflow-threshold', '50');
+  await settings.click('#save-overflow');
+  await settings.waitForTimeout(100);
 
   // ---------- 3. 后台消息路由（Na 死分支修复 / Ba 移动 / Da 删除） ----------
   console.log('\n[3] 后台消息路由');
@@ -634,8 +669,102 @@ const zhihuHtml = '<!doctype html><html><body><h1>zhihu</h1></body></html>';
     if (!page.isClosed()) await page.close().catch(() => {});
   }
 
-  // ---------- 9. 工具栏图标 -> 整页设置 ----------
-  console.log('\n[9] 工具栏图标');
+  // ---------- 9. 标签超限自动归档 ----------
+  console.log('\n[9] 标签超限自动归档');
+
+  // 清场：窗口里只留设置页，这样标签数从 1 开始数
+  for (const page of context.pages()) {
+    if (page !== settings) await page.close().catch(() => {});
+  }
+  await settings.evaluate(async () => {
+    await chrome.storage.local.set({
+      tabOverflowEnabled: true,
+      tabOverflowThreshold: 5,
+      tabGroups: [],
+      tabOverflowLastResult: null
+    });
+    if (chrome.storage.session) {
+      await chrome.storage.session.remove(['tabOverflowState', 'tabOverflowSuppressUntil']);
+    }
+  });
+  await sleep(300);
+
+  const windowTabCount = () =>
+    settings.evaluate(() => chrome.tabs.query({ currentWindow: true }).then((tabs) => tabs.length));
+  const storedGroups = () =>
+    settings.evaluate(async () => (await chrome.storage.local.get('tabGroups')).tabGroups || []);
+
+  check('清场后窗口里只剩设置页', (await windowTabCount()) === 1, 'count=' + (await windowTabCount()));
+
+  // 阈值 5：设置页 + 4 个新标签，第 4 个创建时越线
+  const overflowPages = [];
+  for (let i = 0; i < 4; i += 1) {
+    overflowPages.push(await newRoutedPage(context, `https://overflow.test/p${i}`));
+  }
+
+  check(
+    '达到阈值后自动归档一组',
+    await waitFor(async () => (await storedGroups()).length === 1, 12000),
+    'groups=' + JSON.stringify((await storedGroups()).length)
+  );
+  await waitFor(async () => {
+    const data = await settings.evaluate(() => chrome.storage.local.get('tabOverflowLastResult'));
+    return !!data.tabOverflowLastResult && data.tabOverflowLastResult.archived > 0;
+  }, 10000);
+
+  const firstGroup = (await storedGroups())[0];
+  const lastResult = (await settings.evaluate(() => chrome.storage.local.get('tabOverflowLastResult'))).tabOverflowLastResult;
+  check(
+    '归档 3 个：扩展页与当前标签都不进',
+    firstGroup?.tabsMeta?.length === 3 &&
+      firstGroup.tabsMeta.every((tab) => tab.url.startsWith('https://overflow.test/')),
+    JSON.stringify(firstGroup?.tabsMeta?.map((tab) => tab.url))
+  );
+  check('窗口里只剩设置页 + 当前标签', (await windowTabCount()) === 2, 'count=' + (await windowTabCount()));
+  check('lastResult 记录此次归档', lastResult?.archived === 3 && lastResult?.total === 5, JSON.stringify(lastResult));
+
+  // 没越线时不能再归档
+  const afterPage = await newRoutedPage(context, 'https://overflow.test/after');
+  await sleep(1200);
+  check('没到阈值时不再归档', (await storedGroups()).length === 1, 'groups=' + (await storedGroups()).length);
+
+  // OneTab 恢复分组不能被立刻收回去（抑制窗口）
+  const groupId = firstGroup.id;
+  const beforeRestore = await windowTabCount();
+  await settings.evaluate((id) => chrome.runtime.sendMessage({ type: 'Na', args: [id, 'currentWindow'] }), groupId);
+  const restoredTabs = await waitFor(async () => (await windowTabCount()) >= beforeRestore + 3, 10000);
+  check('恢复分组会真的打开 3 个标签', restoredTabs, `count ${beforeRestore} -> ${await windowTabCount()}`);
+  await sleep(1500);
+  check('恢复后不会被自动归档回去', (await storedGroups()).length === 1, 'groups=' + (await storedGroups()).length);
+
+  // 修复验证：Da(group, true) 必须“先恢复再删组”，旧版只删不恢复
+  const beforeDa = await windowTabCount();
+  const daResponse = await settings.evaluate(
+    (id) => chrome.runtime.sendMessage({ type: 'Da', args: [id, true, 'currentWindow'] }),
+    groupId
+  );
+  check('Da 恢复并删除返回成功', daResponse && daResponse.error === undefined, JSON.stringify(daResponse));
+  check('分组已从存储里删除', await waitFor(async () => (await storedGroups()).length === 0, 8000));
+  check(
+    'Da(group,true) 先恢复标签再删组（旧版只删不恢复）',
+    await waitFor(async () => (await windowTabCount()) >= beforeDa + 3, 10000),
+    `count ${beforeDa} -> ${await windowTabCount()}`
+  );
+
+  // 收尾：清掉测试标签和临时阈值
+  for (const page of context.pages()) {
+    if (page !== settings) await page.close().catch(() => {});
+  }
+  await settings.evaluate(async () => {
+    await chrome.storage.local.set({ tabOverflowThreshold: 50, tabGroups: [] });
+    if (chrome.storage.session) {
+      await chrome.storage.session.remove(['tabOverflowState', 'tabOverflowSuppressUntil']);
+    }
+  });
+  await sleep(300);
+
+  // ---------- 10. 工具栏图标 -> 整页设置 ----------
+  console.log('\n[10] 工具栏图标');
   await settings.close();
   await sleep(400);
 

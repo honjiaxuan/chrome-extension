@@ -137,7 +137,7 @@ for (const perm of declared) {
 
 console.log('\n[8] 危险写法');
 if (/\.innerHTML\s*=/.test(read('settings.js'))) warn('settings.js 用了 innerHTML');
-for (const file of ['content.js', 'ai_shortcuts.js', 'missav_main.js', 'background.js', 'auto_mute.js', 'dedupe.js', 'domain_utils.js']) {
+for (const file of ['content.js', 'ai_shortcuts.js', 'missav_main.js', 'background.js', 'auto_mute.js', 'dedupe.js', 'domain_utils.js', 'tab_overflow.js']) {
   const src = read(file);
   if (/\beval\s*\(/.test(src)) fail(file + ' 用了 eval');
   if (/innerHTML\s*=/.test(src)) warn(file + ' 用了 innerHTML');

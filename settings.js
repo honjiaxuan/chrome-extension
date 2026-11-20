@@ -10,6 +10,12 @@ const els = {
   aiShortcuts: document.getElementById('ai-shortcuts'),
   autoMute: document.getElementById('auto-mute'),
   dedupeEnabled: document.getElementById('dedupe-enabled'),
+  tabOverflow: document.getElementById('tab-overflow'),
+  overflowThreshold: document.getElementById('overflow-threshold'),
+  saveOverflow: document.getElementById('save-overflow'),
+  overflowError: document.getElementById('overflow-error'),
+  overflowCount: document.getElementById('overflow-count'),
+  overflowStatus: document.getElementById('overflow-status'),
   keywordInput: document.getElementById('keyword-input'),
   addKeyword: document.getElementById('add-keyword'),
   keywordList: document.getElementById('keyword-list'),
@@ -43,6 +49,9 @@ function readState() {
     dedupeEnabled: true,
     dedupeDomains: ['threads.com', 'zhihu.com'],
     dedupeLastResult: null,
+    tabOverflowEnabled: true,
+    tabOverflowThreshold: 50,
+    tabOverflowLastResult: null,
     aiDisabledSites: [],
     blockedKeywords: [],
     unblockUntil: 0
@@ -144,6 +153,36 @@ function renderDedupeStatus(result) {
     '上次清理：关闭 ' + (result.closed || 0) + ' 个（' + new Date(result.at).toLocaleString() + '）';
 }
 
+function renderOverflowStatus(result) {
+  if (!result || !result.at) {
+    els.overflowStatus.textContent = '还没有触发过';
+    return;
+  }
+  els.overflowStatus.textContent =
+    '上次自动归档：收进 ' + (result.archived || 0) + ' 个（窗口内原有 ' +
+    (result.total || 0) + ' 个，' + new Date(result.at).toLocaleString() + '）';
+}
+
+async function renderTabCount() {
+  try {
+    const tabs = await chrome.tabs.query({ currentWindow: true });
+    els.overflowCount.textContent = '当前窗口 ' + tabs.length + ' 个标签';
+  } catch (e) {
+    els.overflowCount.textContent = '';
+  }
+}
+
+function saveOverflowThreshold() {
+  const raw = els.overflowThreshold.value.trim();
+  const value = Number(raw);
+  if (!raw || !Number.isInteger(value) || value < 5 || value > 500) {
+    els.overflowError.textContent = '阈值需要是 5 到 500 之间的整数';
+    return;
+  }
+  els.overflowError.textContent = '';
+  storage.set({ tabOverflowThreshold: value });
+}
+
 function render(state) {
   els.accessBlock.checked = state.extensionEnabled !== false;
   els.contentFilter.checked = state.contentFilterEnabled !== false;
@@ -168,6 +207,13 @@ function render(state) {
   ).slice();
   renderDedupeDomains();
   renderDedupeStatus(state.dedupeLastResult);
+
+  els.tabOverflow.checked = state.tabOverflowEnabled !== false;
+  const threshold = Number(state.tabOverflowThreshold);
+  els.overflowThreshold.value = String(
+    Number.isInteger(threshold) && threshold >= 5 && threshold <= 500 ? threshold : 50
+  );
+  renderOverflowStatus(state.tabOverflowLastResult);
 
   renderUnblock(Number(state.unblockUntil) || 0);
 }
@@ -325,6 +371,20 @@ function bindEvents() {
   });
   els.dedupeNow.addEventListener('click', runDedupeNow);
 
+  els.tabOverflow.addEventListener('change', () =>
+    storage.set({ tabOverflowEnabled: els.tabOverflow.checked })
+  );
+  els.saveOverflow.addEventListener('click', saveOverflowThreshold);
+  els.overflowThreshold.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      saveOverflowThreshold();
+    }
+  });
+  els.overflowThreshold.addEventListener('input', () => {
+    els.overflowError.textContent = '';
+  });
+
   els.unblock15.addEventListener('click', async () => {
     const until = Date.now() + UNBLOCK_MS;
     await storage.set({ unblockUntil: until });
@@ -343,6 +403,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   els.version.textContent = 'v' + chrome.runtime.getManifest().version;
   bindEvents();
   render(await readState());
+  renderTabCount();
 
   // 别的窗口/页面改了 storage 时保持同步
   chrome.storage.onChanged.addListener(async (changes, area) => {
@@ -355,4 +416,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     const { unblockUntil = 0 } = await storage.get({ unblockUntil: 0 });
     renderUnblock(Number(unblockUntil) || 0);
   }, 1000);
+
+  // 当前窗口标签数（只读展示，归档由后台在新增标签时触发）
+  setInterval(renderTabCount, 2000);
 });

@@ -71,7 +71,8 @@
         button:disabled { opacity: .5; cursor: default; }
 
         .add-row { display: flex; gap: 8px; margin-top: 8px; }
-        .add-row input[type="text"] {
+        .add-row input[type="text"],
+        .add-row input[type="number"] {
             flex: 1 1 auto;
             min-width: 0;
             font: inherit;
@@ -79,7 +80,9 @@
             border: 1px solid #ccc;
             border-radius: 6px;
         }
-        .add-row input[type="text"]:focus {
+        .add-row input[type="number"] { max-width: 110px; flex: 0 0 auto; }
+        .add-row input[type="text"]:focus,
+        .add-row input[type="number"]:focus {
             outline: 2px solid #111;
             outline-offset: -1px;
         }
@@ -134,7 +137,7 @@
     <div class="wrap">
         <header>
             <h1>HJX Extension<span class="version" id="version"></span></h1>
-            <p class="sub">OneTab 标签聚合 · ACG 站点过滤 · AI 聊天快捷键 · 域名自动静音</p>
+            <p class="sub">OneTab 标签聚合 · ACG 站点过滤 · AI 聊天快捷键 · 域名自动静音 · 标签超限归档</p>
         </header>
 
         <div class="grid">
@@ -194,6 +197,21 @@
                     <button id="dedupe-now">立即清理</button>
                     <span id="dedupe-status" class="hint" style="margin:0"></span>
                 </div>
+            </section>
+
+            <section class="card">
+                <div class="row">
+                    <label for="tab-overflow">标签超限自动归档</label>
+                    <input type="checkbox" id="tab-overflow" checked>
+                </div>
+                <p class="hint">当前窗口的标签数达到阈值时，自动把除“当前标签”以外的标签收进 OneTab；固定标签、排除名单和扩展页不动。开关或阈值改完后，下一次新开标签时生效。</p>
+                <div class="add-row">
+                    <input type="number" id="overflow-threshold" min="5" max="500" step="1" value="50" aria-label="标签数阈值">
+                    <button id="save-overflow">保存阈值</button>
+                </div>
+                <div id="overflow-error" class="error"></div>
+                <p class="hint" id="overflow-count" style="margin:6px 0 0"></p>
+                <p class="hint" id="overflow-status" style="margin:2px 0 0"></p>
             </section>
 
             <section class="card">

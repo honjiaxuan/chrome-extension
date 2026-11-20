@@ -3,6 +3,7 @@
 importScripts('domain_utils.js');
 importScripts('auto_mute.js');
 importScripts('dedupe.js');
+importScripts('tab_overflow.js');
 
 const wt = chrome.runtime.getManifest().version;
 
@@ -191,6 +192,17 @@ chrome.action.onClicked.addListener(() => {
         .finally(() => openSettingsPage());
 });
 
+// 扩展页与浏览器内部页不进 OneTab：存进去也恢复不回来
+const UNARCHIVABLE_SCHEMES = new Set([
+    'chrome:',
+    'edge:',
+    'about:',
+    'devtools:',
+    'view-source:',
+    'chrome-extension:',
+    'edge-extension:'
+]);
+
 async function sendTabsToOneTab(tabs, force = false) {
     const onetabUrl = chrome.runtime.getURL('onetab.html');
     const settings = await chrome.storage.local.get(['optionPinnedTabsAllow', 'excludedUrls', 'excludedDomains']);
@@ -200,21 +212,25 @@ async function sendTabsToOneTab(tabs, force = false) {
 
     const filteredTabs = tabs.filter((t) => {
         if (!t.url) return false;
-        if (t.url === onetabUrl || t.url.startsWith('chrome-extension://')) return false;
+        if (t.url === onetabUrl) return false;
         if (!force && t.pinned && !allowPinned) return false;
 
+        let url;
         try {
-            const url = new URL(t.url);
-            if (excludedUrls.includes(t.url)) return false;
-            if (excludedDomains.some((d) => url.hostname === d || url.hostname.endsWith('.' + d))) return false;
+            url = new URL(t.url);
         } catch (e) {
-            // about: / data: 之类解析失败的直接放过，由下面 tabs.remove 决定
+            // about: / data: 之类解析失败的不归档（恢复不回来）
+            return false;
         }
+        if (UNARCHIVABLE_SCHEMES.has(url.protocol)) return false;
+
+        if (excludedUrls.includes(t.url)) return false;
+        if (excludedDomains.some((d) => url.hostname === d || url.hostname.endsWith('.' + d))) return false;
 
         return true;
     });
 
-    if (filteredTabs.length === 0) return;
+    if (filteredTabs.length === 0) return 0;
 
     const newGroup = {
         id: newId(),
@@ -232,6 +248,8 @@ async function sendTabsToOneTab(tabs, force = false) {
 
     const tabsToRemove = filteredTabs.filter((t) => t.id !== undefined).map((t) => t.id);
     if (tabsToRemove.length > 0) await chrome.tabs.remove(tabsToRemove);
+
+    return filteredTabs.length;
 }
 
 async function excludeUrl(urlStr, isDomain) {
@@ -280,6 +298,14 @@ async function restoreGroup(groupId, opener) {
 
     const urls = group.tabsMeta.map((t) => t.url).filter(Boolean);
     if (urls.length === 0) return;
+
+    // 恢复出来的标签会瞬间把窗口推过阈值，先压住自动归档；
+    // 否则“恢复 → 立刻又被收进口袋”，用户永远打不开这一组。
+    if (globalThis.HJX_TAB_OVERFLOW) {
+        await globalThis.HJX_TAB_OVERFLOW.suppressFor(
+            globalThis.HJX_TAB_OVERFLOW.RESTORE_SUPPRESS_MS
+        );
+    }
 
     if (typeof opener === 'string' && opener.startsWith('newWindow')) {
         await chrome.windows.create({ url: urls });
@@ -384,8 +410,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                     responseData = await HJX_DEDUPE.closeDuplicates();
                     break;
                 case 'Da': {
+                    // OneTab 的“恢复并删除”走 Da(groupId, true, mode)：先恢复再删组。
+                    // 第二个参数为假时才是纯删除（组标题上的垃圾桶按钮）。
+                    const [groupId, alsoRestore, opener] = message.args || [];
+                    if (alsoRestore === true) {
+                        await restoreGroup(groupId, opener);
+                    }
                     const { groups, storageKey } = await readGroups();
-                    await writeGroups(groups.filter((g) => g.id !== message.args[0]), storageKey);
+                    await writeGroups(groups.filter((g) => g.id !== groupId), storageKey);
                     responseData = {};
                     break;
                 }
@@ -508,3 +540,6 @@ chrome.commands.onCommand.addListener((command) => {
 
 // 域名自动静音：注册监听 + 启动/SW 重启时按当前配置对齐所有标签
 HJX_AUTO_MUTE.init();
+
+// 标签超限自动归档：达到阈值时把窗口里的标签收进 OneTab（保留当前标签）
+HJX_TAB_OVERFLOW.init({ archiveTabs: sendTabsToOneTab });
